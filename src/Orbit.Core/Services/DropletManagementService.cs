@@ -265,12 +265,22 @@ public sealed partial class DropletManagementService(IDropletService droplets, I
         var serverNames = string.Join(' ', allDomains);
 
         string config;
+        var prelude = "";
         if (request.Mode == "static")
         {
+            // Default the doc root to /var/www/<domain> so "create a website" needs nothing else.
             var root = (request.Root ?? "").Trim();
+            if (root.Length == 0) root = $"/var/www/{domain}";
             if (!SafePathRegex().IsMatch(root))
                 throw new ProviderException("Enter a valid document root path, e.g. /var/www/example.", 400);
             config = BuildStaticSite(serverNames, root);
+
+            // Provision the folder up front and seed a placeholder page, so the site serves 200
+            // immediately (no 403/404) and there's somewhere to upload the real files into.
+            var placeholder = BuildPlaceholderHtml(domain);
+            prelude =
+                $"mkdir -p {root}\n" +
+                $"if [ -z \"$(ls -A {root} 2>/dev/null)\" ]; then cat > {root}/index.html <<'ORBIT_HTML_EOF'\n{placeholder}\nORBIT_HTML_EOF\nfi\n";
         }
         else
         {
@@ -284,9 +294,11 @@ public sealed partial class DropletManagementService(IDropletService droplets, I
         var available = $"/etc/nginx/sites-available/{domain}";
         var enabled = $"/etc/nginx/sites-enabled/{domain}";
 
-        // Write via a quoted heredoc (no shell expansion of $host etc.), symlink, test, then reload —
-        // and if the test fails, remove the symlink so the next reload isn't broken.
+        // Provision (static only), write the vhost via a quoted heredoc (no shell expansion of $host
+        // etc.), symlink, test, then reload — and if the test fails, remove the symlink so the next
+        // reload isn't broken.
         var command =
+            prelude +
             $"cat > {available} <<'ORBIT_NGINX_EOF'\n{config}\nORBIT_NGINX_EOF\n" +
             $"ln -sf {available} {enabled}\n" +
             $"if nginx -t 2>&1; then systemctl reload nginx && echo 'SITE_CREATED'; else rm -f {enabled}; echo 'REVERTED: nginx config test failed'; exit 1; fi";
@@ -586,6 +598,37 @@ public sealed partial class DropletManagementService(IDropletService droplets, I
                 proxy_set_header Connection "upgrade";
             }
         }
+        """;
+
+    // A friendly "it works" placeholder so a freshly-created static site serves 200 right away.
+    // domain is validated as a hostname before it reaches here, so it's safe to interpolate.
+    private static string BuildPlaceholderHtml(string domain) =>
+        $$"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>{{domain}}</title>
+            <style>
+                :root { color-scheme: dark; }
+                body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+                    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+                    background: #0b0f17; color: #e6edf6; }
+                .card { text-align: center; padding: 2rem; }
+                h1 { font-size: 1.4rem; margin: 0 0 .5rem; }
+                p { color: #9fb0c3; margin: .25rem 0; }
+                code { background: #161c28; padding: .15rem .4rem; border-radius: 6px; color: #8fd9c0; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>{{domain}} is live 🚀</h1>
+                <p>This site was set up by Orbit and is serving from its document root.</p>
+                <p>Upload your files to replace this page.</p>
+            </div>
+        </body>
+        </html>
         """;
 
     private static string BuildStaticSite(string serverNames, string root) =>
