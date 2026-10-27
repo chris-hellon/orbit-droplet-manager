@@ -62,6 +62,29 @@
                         <div class="page-pad">
                             <div class="pad-grid">
                                 <div class="pad-col">
+                                    @if (ShowMonitoring)
+                                    {
+                                        <div class="card" style="padding:1.25rem; border-color:#244063;">
+                                            @if (_monitoring is { Running: true })
+                                            {
+                                                <h3 style="margin:0 0 .25rem; font-size:1rem;">Monitoring enabled</h3>
+                                                <p class="faint" style="font-size:.82rem; margin:0;">DigitalOcean's agent is running — the graphs fill in within a few minutes.</p>
+                                            }
+                                            else
+                                            {
+                                                <h3 style="margin:0 0 .25rem; font-size:1rem;">Live metrics are off</h3>
+                                                <p class="faint" style="font-size:.82rem; margin:0 0 .75rem;">
+                                                    The CPU / memory / disk graphs come from DigitalOcean's monitoring agent, which isn't installed on this droplet yet.
+                                                </p>
+                                                <button class="btn btn-primary btn-sm" @onclick="EnableMonitoringAsync" disabled="@_monitoringBusy">
+                                                    @if (_monitoringBusy) { <span class="spinner"></span> }
+                                                    Enable monitoring
+                                                </button>
+                                                <span class="hint" style="margin-left:.6rem;">Installs DigitalOcean's do-agent over SSH.</span>
+                                            }
+                                            @if (_monitoringMsg is not null) { <div class="alert alert-info" style="margin-top:.75rem;">@_monitoringMsg</div> }
+                                        </div>
+                                    }
                                     <div class="card" style="padding:1.25rem;">
                                         <Meter Label="CPU" Value="_droplet.CpuPercent" />
                                         <div style="height:.7rem;"></div>
@@ -760,6 +783,11 @@
     private bool _confirmResize;
     private bool _confirmRebuild;
 
+    private MonitoringStatusDto? _monitoring;
+    private bool _monitoringBusy;
+    private string? _monitoringMsg;
+    private bool ShowMonitoring => _monitoring is { Running: false } || _monitoringMsg is not null;
+
     private IReadOnlyList<SizeDto> AvailableSizes => _sizes?
         .Where(s => s.Available && s.Slug != _droplet?.SizeSlug && (_droplet is null || s.Regions.Contains(_droplet.RegionSlug)))
         .OrderBy(s => s.PriceMonthly)
@@ -807,6 +835,33 @@
         finally { _loading = false; }
 
         _ = LoadCatalogAsync();
+        _ = LoadMonitoringAsync();
+    }
+
+    private async Task LoadMonitoringAsync()
+    {
+        // Only surface the "enable monitoring" prompt when live metrics aren't coming through.
+        if (!_sshConfigured || _droplet is null) return;
+        if (_droplet.CpuPercent is not null || _droplet.MemoryPercent is not null) return;
+        try
+        {
+            _monitoring = await Api.GetMonitoringAsync(Id);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* best-effort; the prompt just won't show */ }
+    }
+
+    private async Task EnableMonitoringAsync()
+    {
+        _monitoringBusy = true;
+        _monitoringMsg = null;
+        try
+        {
+            _monitoring = await Api.InstallMonitoringAsync(Id);
+            _monitoringMsg = "Monitoring agent installed. DigitalOcean starts reporting within a few minutes — the graphs fill in automatically once data arrives.";
+        }
+        catch (Exception ex) { _monitoringMsg = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _monitoringBusy = false; }
     }
 
     private async Task LoadCatalogAsync()

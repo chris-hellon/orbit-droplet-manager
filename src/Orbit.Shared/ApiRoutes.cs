@@ -36,6 +36,9 @@ public static class ApiRoutes
         public static string FirewallRule(long id, int number) => $"{Base}/droplets/{id}/firewall/{number}"; // DELETE
         public static string FirewallToggle(long id) => $"{Base}/droplets/{id}/firewall/toggle"; // POST
 
+        public static string Monitoring(long id) => $"{Base}/droplets/{id}/monitoring";              // GET status
+        public static string MonitoringInstall(long id) => $"{Base}/droplets/{id}/monitoring/install"; // POST
+
         // --- file manager (SFTP) ---
         public static string Files(long id) => $"{Base}/droplets/{id}/files";                 // GET ?path= list, DELETE via files/delete
         public static string FilesUpload(long id) => $"{Base}/droplets/{id}/files/upload";     // POST raw body ?path=&name=

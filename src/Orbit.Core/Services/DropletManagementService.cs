@@ -35,6 +35,10 @@ public interface IDropletManagementService
     Task<SshTestResultDto> TestAsync(long dropletId, CancellationToken ct = default);
     Task<string> ResolveHostAsync(long dropletId, CancellationToken ct = default);
 
+    // --- monitoring agent (backs live CPU/RAM/disk graphs) ---
+    Task<MonitoringStatusDto> GetMonitoringStatusAsync(long dropletId, CancellationToken ct = default);
+    Task<MonitoringStatusDto> InstallMonitoringAsync(long dropletId, CancellationToken ct = default);
+
     // --- files (SFTP) ---
     Task<DirectoryListingDto> ListFilesAsync(long dropletId, string? path, CancellationToken ct = default);
     Task UploadFileAsync(long dropletId, string directory, string fileName, Stream content, CancellationToken ct = default);
@@ -78,6 +82,35 @@ public sealed partial class DropletManagementService(IDropletService droplets, I
 
     public async Task<SshTestResultDto> TestAsync(long dropletId, CancellationToken ct = default)
         => await ssh.TestAsync(await ResolveHostAsync(dropletId, ct), ct);
+
+    public async Task<MonitoringStatusDto> GetMonitoringStatusAsync(long dropletId, CancellationToken ct = default)
+    {
+        var host = await ResolveHostAsync(dropletId, ct);
+        var r = await ssh.RunAsync(host,
+            "if systemctl cat do-agent >/dev/null 2>&1; then printf 'INSTALLED '; systemctl is-active do-agent 2>/dev/null || true; else echo MISSING; fi", ct);
+        var token = r.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "";
+        var installed = r.Output.Contains("INSTALLED", StringComparison.Ordinal);
+        return new MonitoringStatusDto { Installed = installed, Running = installed && token == "active" };
+    }
+
+    public async Task<MonitoringStatusDto> InstallMonitoringAsync(long dropletId, CancellationToken ct = default)
+    {
+        var host = await ResolveHostAsync(dropletId, ct);
+        // DigitalOcean's official one-line installer; then make sure the service is enabled + started.
+        var r = await ssh.RunAsync(host,
+            "curl -sSL https://repos.insights.digitalocean.com/install.sh | bash && " +
+            "systemctl enable --now do-agent >/dev/null 2>&1; systemctl is-active do-agent 2>/dev/null || true", ct);
+
+        var status = await GetMonitoringStatusAsync(dropletId, ct);
+        if (!status.Installed)
+        {
+            var detail = (r.Output + "\n" + r.Error).Trim();
+            if (detail.Length > 400) detail = "…" + detail[^400..];
+            throw new SshAccessException($"Couldn't install the monitoring agent. {detail}");
+        }
+        await activity.RecordAsync("monitoring", "Enabled DigitalOcean monitoring agent", dropletId, "success", ct);
+        return status;
+    }
 
     private const string CustomMarker = "::ORBIT-CUSTOM::";
 

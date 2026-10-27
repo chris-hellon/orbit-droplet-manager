@@ -52,6 +52,15 @@ public sealed record LogOutputDto
     public string Content { get; init; } = "";
 }
 
+/// <summary>Whether the DigitalOcean monitoring agent (do-agent) — which backs the live CPU/RAM/disk graphs — is present on a droplet.</summary>
+public sealed record MonitoringStatusDto
+{
+    public bool Installed { get; init; }
+    public bool Running { get; init; }
+
+    public static MonitoringStatusDto Absent { get; } = new();
+}
+
 /// <summary>A command run result surfaced to the UI.</summary>
 public sealed record CommandResultDto
 {

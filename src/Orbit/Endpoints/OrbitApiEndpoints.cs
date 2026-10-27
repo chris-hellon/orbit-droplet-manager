@@ -226,6 +226,12 @@ public static class OrbitApiEndpoints
         api.MapGet("/droplets/{id:long}/services", (long id, IDropletManagementService mgmt, CancellationToken ct)
             => Guard(() => mgmt.ListServicesAsync(id, ct)));
 
+        api.MapGet("/droplets/{id:long}/monitoring", (long id, IDropletManagementService mgmt, CancellationToken ct)
+            => Guard(() => mgmt.GetMonitoringStatusAsync(id, ct)));
+
+        api.MapPost("/droplets/{id:long}/monitoring/install", (long id, IDropletManagementService mgmt, CancellationToken ct)
+            => Guard(() => mgmt.InstallMonitoringAsync(id, ct)));
+
         api.MapPost("/droplets/{id:long}/service-action", (long id, ServiceActionRequest req, IDropletManagementService mgmt, CancellationToken ct)
             => Guard(() => mgmt.ServiceActionAsync(id, req.Unit, req.Action, ct)));
 

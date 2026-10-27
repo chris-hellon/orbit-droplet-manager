@@ -134,6 +134,12 @@ public sealed class OrbitApiClient(HttpClient http)
     public async Task<IReadOnlyList<ServiceUnitDto>> GetServicesAsync(long id, CancellationToken ct = default)
         => await GetAsync<List<ServiceUnitDto>>(ApiRoutes.Droplets.Services(id), ct) ?? [];
 
+    public Task<MonitoringStatusDto> GetMonitoringAsync(long id, CancellationToken ct = default)
+        => GetAsync<MonitoringStatusDto>(ApiRoutes.Droplets.Monitoring(id), ct)!;
+
+    public Task<MonitoringStatusDto> InstallMonitoringAsync(long id, CancellationToken ct = default)
+        => PostEmptyAsync<MonitoringStatusDto>(ApiRoutes.Droplets.MonitoringInstall(id), ct);
+
     public Task<CommandResultDto> ServiceActionAsync(long id, string unit, string action, CancellationToken ct = default)
         => PostAsync<ServiceActionRequest, CommandResultDto>(ApiRoutes.Droplets.ServiceAction(id), new ServiceActionRequest { Unit = unit, Action = action }, ct);
 
