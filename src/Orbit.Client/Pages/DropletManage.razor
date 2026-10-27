@@ -3,6 +3,7 @@
 @using Orbit.Client.Shared
 @inject OrbitApiClient Api
 @inject NavigationManager Nav
+@inject IJSRuntime Js
 
 <PageTitle>Orbit · @(_droplet?.Name ?? "Droplet")</PageTitle>
 
@@ -494,9 +495,33 @@
                         }
                         else if (_siteZone is null)
                         {
-                            <div class="alert alert-info">
-                                DNS for <b>@site.PrimaryDomain</b> isn't hosted on DigitalOcean — the zone isn't in this account, so its records can't be managed here.
+                            <div class="alert alert-info" style="margin-bottom:.6rem;">
+                                <b>@site.PrimaryDomain</b>'s DNS isn't hosted on DigitalOcean, so Orbit can't change its records for you.
+                                Add the record(s) below at whoever runs this domain's DNS (your registrar or DNS host), then come back and enable HTTPS.
                             </div>
+                            @if (DnsInstructions(site) is { Count: > 0 } recs)
+                            {
+                                <div class="dns-guide">
+                                    <div class="dns-guide-head">
+                                        <span>Type</span><span>Name / Host</span><span>Value</span><span>TTL</span><span></span>
+                                    </div>
+                                    @foreach (var r in recs)
+                                    {
+                                        <div class="dns-guide-row">
+                                            <span class="tag">@r.Type</span>
+                                            <span class="mono">@r.Name</span>
+                                            <span class="mono">@r.Value</span>
+                                            <span class="mono faint">@r.Ttl</span>
+                                            <button class="btn btn-ghost btn-sm" title="Copy value" @onclick="() => CopyAsync(r.Value)">@(_copied == r.Value ? "✓" : "⧉")</button>
+                                        </div>
+                                    }
+                                </div>
+                                <p class="hint" style="margin-top:.5rem;">
+                                    Some providers want just the host label (e.g. <span class="mono">@HostLabel(site)</span> or <span class="mono">@@</span> for the root);
+                                    others want the full name shown above. DNS changes can take anywhere from a few minutes to a few hours to take effect.
+                                    Enable HTTPS once <span class="mono">@site.PrimaryDomain</span> resolves to this droplet.
+                                </p>
+                            }
                         }
                         else
                         {
@@ -864,6 +889,54 @@
                     || (_siteSub == "@" && (r.Name == "@" || r.Name.Equals(_siteZone?.Name, StringComparison.OrdinalIgnoreCase))))
         .ToList();
 
+    private string? _copied;
+
+    private sealed record DnsGuideRow(string Type, string Name, string Value, string Ttl);
+
+    // Best-effort host label for a FQDN: "@" for an apex (two labels, e.g. example.com),
+    // otherwise everything left of the last two labels (e.g. "app" or "app.staging").
+    private static string HostLabel(SiteDto site)
+    {
+        var fqdn = site.PrimaryDomain.Trim().TrimEnd('.').ToLowerInvariant();
+        var labels = fqdn.Split('.');
+        return labels.Length <= 2 ? "@" : string.Join('.', labels[..^2]);
+    }
+
+    // The A/AAAA record(s) the user needs to create at their own DNS provider to point the
+    // site's domain at this droplet. Shows the full hostname (works everywhere) plus a www CNAME
+    // when the site serves a www alias.
+    private List<DnsGuideRow> DnsInstructions(SiteDto site)
+    {
+        var rows = new List<DnsGuideRow>();
+        var fqdn = site.PrimaryDomain.Trim().TrimEnd('.').ToLowerInvariant();
+        if (fqdn.Length == 0) return rows;
+
+        if (_droplet?.PublicIpv4 is { Length: > 0 } v4)
+            rows.Add(new DnsGuideRow("A", fqdn, v4, "3600"));
+        if (_droplet?.PublicIpv6 is { Length: > 0 } v6)
+            rows.Add(new DnsGuideRow("AAAA", fqdn, v6, "3600"));
+
+        // If the site also answers for the www. variant, a CNAME back to the apex is the usual setup.
+        var www = "www." + fqdn;
+        if (site.Domains.Any(d => d.Equals(www, StringComparison.OrdinalIgnoreCase)))
+            rows.Add(new DnsGuideRow("CNAME", www, fqdn, "3600"));
+
+        return rows;
+    }
+
+    private async Task CopyAsync(string text)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            _copied = text;
+            StateHasChanged();
+            await Task.Delay(1500);
+            if (_copied == text) { _copied = null; StateHasChanged(); }
+        }
+        catch { /* clipboard unavailable (e.g. insecure context) — the value is visible to copy manually */ }
+    }
+
     private async Task LoadSitesAsync()
     {
         _sitesLoading = true;
@@ -958,6 +1031,7 @@
         _addSiteError = null;
         try
         {
+            var domain = _newSite.Domain.Trim();
             var result = await Api.CreateSiteAsync(Id, _newSite);
             if (result.Ok)
             {
@@ -968,6 +1042,9 @@
                 _newSite.UpstreamPort = null;
                 _newSite.Root = null;
                 await LoadSitesAsync();
+                // Open the new site straight away so its DNS setup instructions are front and centre.
+                var created = _sites.FirstOrDefault(s => s.PrimaryDomain.Equals(domain, StringComparison.OrdinalIgnoreCase));
+                if (created is not null) await OpenSite(created);
             }
             else
             {

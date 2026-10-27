@@ -131,3 +131,9 @@ Everything is environment-variable driven (double-underscore binds nested keys):
 Backups/snapshots surfaced per droplet, scheduled tasks (cron), bulk actions across droplets,
 historical metric graphs, authentication/multi-user, SSH host-key pinning, and offline-vendored
 globe/xterm assets.
+
+---
+
+## License
+
+[MIT](LICENSE) © Chris Hellon.

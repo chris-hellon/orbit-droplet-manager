@@ -392,6 +392,20 @@ table.droplets tr.row-selected { background: var(--bg-2); box-shadow: inset 2px 
 .res-row { padding: .4rem 0; border-bottom: 1px solid var(--border); }
 .res-row:last-child { border-bottom: none; }
 
+/* DNS setup instructions (zone not on DigitalOcean) */
+.dns-guide { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-2); }
+.dns-guide-head,
+.dns-guide-row { display: grid; grid-template-columns: 64px 1fr 1fr 64px 36px; gap: .5rem; align-items: center; padding: .45rem .6rem; }
+.dns-guide-head { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+.dns-guide-row { border-bottom: 1px solid var(--border); font-size: .82rem; }
+.dns-guide-row:last-child { border-bottom: none; }
+.dns-guide-row .mono { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+    .dns-guide-head { display: none; }
+    .dns-guide-row { grid-template-columns: 1fr 1fr 36px; }
+    .dns-guide-row .tag { grid-column: 1 / -1; }
+}
+
 /* ---------- Polish ---------- */
 .card { position: relative; }
 .card::before {
