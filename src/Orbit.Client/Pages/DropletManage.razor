@@ -59,83 +59,93 @@
                 @switch (_tab)
                 {
                     case "Overview":
-                        <div class="page-pad" style="max-width:560px;">
-                            <Meter Label="CPU" Value="_droplet.CpuPercent" />
-                            <div style="height:.7rem;"></div>
-                            <Meter Label="Memory" Value="_droplet.MemoryPercent" />
-                            <div style="height:.7rem;"></div>
-                            <Meter Label="Disk" Value="_droplet.DiskPercent" />
-                            <dl class="kv" style="margin-top:1.25rem;">
-                                <dt>Public IPv4</dt><dd class="mono">@(_droplet.PublicIpv4 ?? "—")</dd>
-                                <dt>Private IPv4</dt><dd class="mono">@(_droplet.PrivateIpv4 ?? "—")</dd>
-                                <dt>Image</dt><dd>@($"{_droplet.ImageDistribution} {_droplet.ImageName}".Trim())</dd>
-                                <dt>Specs</dt><dd>@_droplet.Vcpus vCPU · @($"{_droplet.MemoryMb / 1024.0:0.#}") GB · @_droplet.DiskGb GB</dd>
-                                <dt>Size</dt><dd class="mono">@_droplet.SizeSlug</dd>
-                            </dl>
+                        <div class="page-pad">
+                            <div class="pad-grid">
+                                <div class="pad-col">
+                                    <div class="card" style="padding:1.25rem;">
+                                        <Meter Label="CPU" Value="_droplet.CpuPercent" />
+                                        <div style="height:.7rem;"></div>
+                                        <Meter Label="Memory" Value="_droplet.MemoryPercent" />
+                                        <div style="height:.7rem;"></div>
+                                        <Meter Label="Disk" Value="_droplet.DiskPercent" />
+                                    </div>
+                                    <div class="card" style="padding:1.25rem;">
+                                        <dl class="kv" style="margin:0;">
+                                            <dt>Public IPv4</dt><dd class="mono">@(_droplet.PublicIpv4 ?? "—")</dd>
+                                            <dt>Private IPv4</dt><dd class="mono">@(_droplet.PrivateIpv4 ?? "—")</dd>
+                                            <dt>Image</dt><dd>@($"{_droplet.ImageDistribution} {_droplet.ImageName}".Trim())</dd>
+                                            <dt>Specs</dt><dd>@_droplet.Vcpus vCPU · @($"{_droplet.MemoryMb / 1024.0:0.#}") GB · @_droplet.DiskGb GB</dd>
+                                            <dt>Size</dt><dd class="mono">@_droplet.SizeSlug</dd>
+                                        </dl>
+                                    </div>
+                                </div>
 
-                            @if (_planMessage is not null) { <div class="alert alert-success" style="margin-top:1.25rem;">@_planMessage</div> }
-                            @if (_planError is not null) { <div class="alert alert-error" style="margin-top:1.25rem;">@_planError</div> }
+                                <div class="pad-col">
+                                    @if (_planMessage is not null) { <div class="alert alert-success" style="margin:0;">@_planMessage</div> }
+                                    @if (_planError is not null) { <div class="alert alert-error" style="margin:0;">@_planError</div> }
 
-                            <div class="card" style="padding:1.1rem; margin-top:1.5rem;">
-                                <h3 style="margin:0 0 .25rem; font-size:1rem;">Resize</h3>
-                                <p class="faint" style="font-size:.8rem; margin:0 0 .75rem;">Change the plan (CPU / RAM). The droplet must be powered off.</p>
-                                @if (_sizes is null)
-                                {
-                                    <span class="spinner"></span>
-                                }
-                                else
-                                {
-                                    <div class="form-field">
-                                        <select class="input" @bind="_resizeSize">
-                                            <option value="">Choose a new size…</option>
-                                            @foreach (var s in AvailableSizes)
+                                    <div class="card" style="padding:1.25rem;">
+                                        <h3 style="margin:0 0 .25rem; font-size:1rem;">Resize</h3>
+                                        <p class="faint" style="font-size:.8rem; margin:0 0 .75rem;">Change the plan (CPU / RAM). The droplet must be powered off.</p>
+                                        @if (_sizes is null)
+                                        {
+                                            <span class="spinner"></span>
+                                        }
+                                        else
+                                        {
+                                            <div class="form-field">
+                                                <select class="input" @bind="_resizeSize">
+                                                    <option value="">Choose a new size…</option>
+                                                    @foreach (var s in AvailableSizes)
+                                                    {
+                                                        <option value="@s.Slug">@s.Label</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                            <label class="row" style="gap:.5rem; font-size:.82rem; cursor:pointer; margin-bottom:.75rem;">
+                                                <input type="checkbox" @bind="_resizeDisk" /> Also grow the disk (permanent — can't be downsized later)
+                                            </label>
+                                            <button class="btn btn-primary btn-sm" @onclick="() => _confirmResize = true"
+                                                    disabled="@(_planBusy || string.IsNullOrEmpty(_resizeSize) || _droplet.IsPoweredOn)">
+                                                Resize
+                                            </button>
+                                            @if (_droplet.IsPoweredOn)
                                             {
-                                                <option value="@s.Slug">@s.Label</option>
+                                                <span class="faint" style="font-size:.8rem; margin-left:.6rem;">Power it off first (Services → or the globe panel).</span>
                                             }
-                                        </select>
+                                        }
                                     </div>
-                                    <label class="row" style="gap:.5rem; font-size:.82rem; cursor:pointer; margin-bottom:.75rem;">
-                                        <input type="checkbox" @bind="_resizeDisk" /> Also grow the disk (permanent — can't be downsized later)
-                                    </label>
-                                    <button class="btn btn-primary btn-sm" @onclick="() => _confirmResize = true"
-                                            disabled="@(_planBusy || string.IsNullOrEmpty(_resizeSize) || _droplet.IsPoweredOn)">
-                                        Resize
-                                    </button>
-                                    @if (_droplet.IsPoweredOn)
-                                    {
-                                        <span class="faint" style="font-size:.8rem; margin-left:.6rem;">Power it off first (Services → or the globe panel).</span>
-                                    }
-                                }
-                            </div>
 
-                            <div class="card" style="padding:1.1rem; margin-top:1.25rem; border-color:#5c2630;">
-                                <h3 style="margin:0 0 .25rem; font-size:1rem;">Rebuild</h3>
-                                <p class="faint" style="font-size:.8rem; margin:0 0 .75rem;">Reinstall the droplet from an image or snapshot. <b style="color:var(--health-critical);">Erases everything</b> on it.</p>
-                                @if (_images is null)
-                                {
-                                    <span class="spinner"></span>
-                                }
-                                else
-                                {
-                                    <div class="form-field">
-                                        <select class="input" @bind="_rebuildImage">
-                                            <option value="">Choose an image…</option>
-                                            <optgroup label="Snapshots">
-                                                @foreach (var i in _images.Where(x => x.IsSnapshot).OrderByDescending(x => x.CreatedAt))
-                                                {
-                                                    <option value="@i.Reference">@i.Name</option>
-                                                }
-                                            </optgroup>
-                                            <optgroup label="Distributions">
-                                                @foreach (var i in _images.Where(x => !x.IsSnapshot).OrderBy(x => x.Distribution).ThenBy(x => x.Name))
-                                                {
-                                                    <option value="@i.Reference">@i.Distribution @i.Name</option>
-                                                }
-                                            </optgroup>
-                                        </select>
+                                    <div class="card" style="padding:1.25rem; border-color:#5c2630;">
+                                        <h3 style="margin:0 0 .25rem; font-size:1rem;">Rebuild</h3>
+                                        <p class="faint" style="font-size:.8rem; margin:0 0 .75rem;">Reinstall the droplet from an image or snapshot. <b style="color:var(--health-critical);">Erases everything</b> on it.</p>
+                                        @if (_images is null)
+                                        {
+                                            <span class="spinner"></span>
+                                        }
+                                        else
+                                        {
+                                            <div class="form-field">
+                                                <select class="input" @bind="_rebuildImage">
+                                                    <option value="">Choose an image…</option>
+                                                    <optgroup label="Snapshots">
+                                                        @foreach (var i in _images.Where(x => x.IsSnapshot).OrderByDescending(x => x.CreatedAt))
+                                                        {
+                                                            <option value="@i.Reference">@i.Name</option>
+                                                        }
+                                                    </optgroup>
+                                                    <optgroup label="Distributions">
+                                                        @foreach (var i in _images.Where(x => !x.IsSnapshot).OrderBy(x => x.Distribution).ThenBy(x => x.Name))
+                                                        {
+                                                            <option value="@i.Reference">@i.Distribution @i.Name</option>
+                                                        }
+                                                    </optgroup>
+                                                </select>
+                                            </div>
+                                            <button class="btn btn-danger btn-sm" @onclick="() => _confirmRebuild = true" disabled="@(_planBusy || string.IsNullOrEmpty(_rebuildImage))">Rebuild</button>
+                                        }
                                     </div>
-                                    <button class="btn btn-danger btn-sm" @onclick="() => _confirmRebuild = true" disabled="@(_planBusy || string.IsNullOrEmpty(_rebuildImage))">Rebuild</button>
-                                }
+                                </div>
                             </div>
                         </div>
                         break;

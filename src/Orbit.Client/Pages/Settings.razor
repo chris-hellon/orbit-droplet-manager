@@ -15,7 +15,9 @@
     </div>
 
     <div class="page-pad">
-        <div class="card" style="padding:1.5rem; margin-bottom:1.25rem;">
+        <div class="pad-grid">
+        <div class="pad-col">
+        <div class="card" style="padding:1.5rem;">
             <div class="spread" style="margin-bottom:1rem;">
                 <h3 style="margin:0;">DigitalOcean</h3>
                 @if (_status is { Connected: true })
@@ -79,11 +81,13 @@
             </div>
         </div>
 
-        <p class="faint" style="font-size:.8rem;">
+        <p class="faint" style="font-size:.8rem; margin:0;">
             The token is encrypted with ASP.NET Core Data Protection and never leaves this server except in calls to the DigitalOcean API.
         </p>
+        </div>
 
-        <div class="card" style="padding:1.5rem; margin-top:1.25rem;">
+        <div class="pad-col">
+        <div class="card" style="padding:1.5rem;">
             <div class="spread" style="margin-bottom:.5rem;">
                 <h3 style="margin:0;">SSH access</h3>
                 @if (_ssh?.Configured == true)
@@ -138,6 +142,8 @@
                     <button class="btn btn-danger" @onclick="() => _confirmDeleteSsh = true" disabled="@_sshBusy">Remove key</button>
                 }
             </div>
+        </div>
+        </div>
         </div>
     </div>
 </div>
