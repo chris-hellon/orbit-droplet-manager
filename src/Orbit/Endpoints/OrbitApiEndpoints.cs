@@ -274,6 +274,39 @@ public static class OrbitApiEndpoints
 
         api.MapDelete("/droplets/{id:long}/db/users/{name}", (long id, string name, IDropletManagementService mgmt, CancellationToken ct)
             => Guard(() => mgmt.DropServerDbUserAsync(id, name, ct)));
+
+        // --- file manager (SFTP) ---
+        api.MapGet("/droplets/{id:long}/files", (long id, string? path, IDropletManagementService mgmt, CancellationToken ct)
+            => Guard(() => mgmt.ListFilesAsync(id, path, ct)));
+
+        api.MapPost("/droplets/{id:long}/files/upload", (long id, string path, string name, HttpRequest req, IDropletManagementService mgmt, CancellationToken ct) =>
+        {
+            // Let an upload exceed Kestrel's default body-size cap for this request only.
+            var feature = req.HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+            if (feature is { IsReadOnly: false }) feature.MaxRequestBodySize = null;
+            return Guard(async () =>
+            {
+                await mgmt.UploadFileAsync(id, path, name, req.Body, ct);
+                return await mgmt.ListFilesAsync(id, path, ct);
+            });
+        });
+
+        api.MapGet("/droplets/{id:long}/files/download", (long id, string path, IDropletManagementService mgmt, CancellationToken ct) =>
+        {
+            var fileName = path.TrimEnd('/');
+            var slash = fileName.LastIndexOf('/');
+            fileName = slash >= 0 && slash < fileName.Length - 1 ? fileName[(slash + 1)..] : "download";
+            return Results.Stream(output => mgmt.DownloadFileAsync(id, path, output, ct), "application/octet-stream", fileName);
+        });
+
+        api.MapPost("/droplets/{id:long}/files/mkdir", (long id, MakeDirRequest req, IDropletManagementService mgmt, CancellationToken ct)
+            => Guard(() => mgmt.MakeDirectoryAsync(id, req.Path, req.Name, ct)));
+
+        api.MapPost("/droplets/{id:long}/files/rename", (long id, RenameFileRequest req, IDropletManagementService mgmt, CancellationToken ct)
+            => Guard(() => mgmt.RenameFileAsync(id, req.Path, req.NewName, ct)));
+
+        api.MapPost("/droplets/{id:long}/files/delete", (long id, DeleteFileRequest req, IDropletManagementService mgmt, CancellationToken ct)
+            => Guard(() => mgmt.DeleteFileAsync(id, req.Path, ct)));
     }
 
     private static void ValidateRecord(DnsRecordRequest req)

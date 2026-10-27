@@ -179,6 +179,40 @@ public sealed class OrbitApiClient(HttpClient http)
     public Task DropServerDbUserAsync(long id, string name, CancellationToken ct = default)
         => DeleteAsync(ApiRoutes.Droplets.DbUser(id, name), ct);
 
+    // ---------- file manager (SFTP) ----------
+
+    public async Task<DirectoryListingDto> ListFilesAsync(long id, string? path, CancellationToken ct = default)
+    {
+        var url = ApiRoutes.Droplets.Files(id);
+        if (!string.IsNullOrEmpty(path)) url += $"?path={Uri.EscapeDataString(path)}";
+        return await GetAsync<DirectoryListingDto>(url, ct)
+               ?? throw new OrbitApiException("No listing returned.", 500);
+    }
+
+    public async Task<DirectoryListingDto> UploadFileAsync(long id, string directory, string name, Stream content, CancellationToken ct = default)
+    {
+        var url = $"{ApiRoutes.Droplets.FilesUpload(id)}?path={Uri.EscapeDataString(directory)}&name={Uri.EscapeDataString(name)}";
+        using var body = new StreamContent(content);
+        body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var res = await http.PostAsync(url, body, ct);
+        await EnsureSuccessAsync(res, ct);
+        return (await res.Content.ReadFromJsonAsync<DirectoryListingDto>(Json, ct))
+               ?? throw new OrbitApiException("The server returned an empty response.", (int)res.StatusCode);
+    }
+
+    public Task<DirectoryListingDto> MakeDirAsync(long id, string directory, string name, CancellationToken ct = default)
+        => PostAsync<MakeDirRequest, DirectoryListingDto>(ApiRoutes.Droplets.FilesMkdir(id), new MakeDirRequest { Path = directory, Name = name }, ct);
+
+    public Task<DirectoryListingDto> RenameFileAsync(long id, string path, string newName, CancellationToken ct = default)
+        => PostAsync<RenameFileRequest, DirectoryListingDto>(ApiRoutes.Droplets.FilesRename(id), new RenameFileRequest { Path = path, NewName = newName }, ct);
+
+    public Task<DirectoryListingDto> DeleteFileAsync(long id, string path, CancellationToken ct = default)
+        => PostAsync<DeleteFileRequest, DirectoryListingDto>(ApiRoutes.Droplets.FilesDelete(id), new DeleteFileRequest { Path = path }, ct);
+
+    /// <summary>Relative URL for a direct browser download of a file (served with Content-Disposition: attachment).</summary>
+    public static string FileDownloadUrl(long id, string path)
+        => $"{ApiRoutes.Droplets.FilesDownload(id)}?path={Uri.EscapeDataString(path)}";
+
     public Task<LogOutputDto> GetLogAsync(long id, string source, string? unit, int lines, CancellationToken ct = default)
     {
         var url = $"{ApiRoutes.Droplets.Logs(id)}?source={Uri.EscapeDataString(source)}&lines={lines}";

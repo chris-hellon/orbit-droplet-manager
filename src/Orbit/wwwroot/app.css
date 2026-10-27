@@ -406,6 +406,28 @@ table.droplets tr.row-selected { background: var(--bg-2); box-shadow: inset 2px 
     .dns-guide-row .tag { grid-column: 1 / -1; }
 }
 
+/* File manager (SFTP) */
+.files-bar { display: flex; align-items: center; gap: .4rem; margin-bottom: .75rem; flex-wrap: wrap; }
+.files-bar .files-path { flex: 1 1 260px; min-width: 160px; }
+.files-spacer { flex: 1 1 auto; }
+.file-upload-btn { position: relative; overflow: hidden; cursor: pointer; }
+.file-upload-btn input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0; }
+.file-upload-btn.is-disabled { pointer-events: none; opacity: .6; }
+
+.files-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.files-table th { text-align: left; font-weight: 600; color: var(--text-dim); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }
+.files-table td { padding: .4rem .6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.files-table .ico-col { width: 28px; text-align: center; }
+.files-table .num { text-align: right; white-space: nowrap; }
+.files-table th.num { text-align: right; }
+.files-table .act-col { width: 1%; white-space: nowrap; text-align: right; }
+.files-table .name-col { word-break: break-all; }
+.file-row.dir { cursor: pointer; }
+.file-row.dir:hover { background: var(--bg-2); }
+.file-row:hover .act-col .btn { opacity: 1; }
+.file-row .act-col .btn { opacity: .55; text-decoration: none; }
+@media (max-width: 720px) { .files-table .perms-col { display: none; } }
+
 /* ---------- Polish ---------- */
 .card { position: relative; }
 .card::before {

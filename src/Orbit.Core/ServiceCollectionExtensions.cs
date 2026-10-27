@@ -61,6 +61,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDatabaseService, DatabaseService>();
         services.AddScoped<ISshCredentialService, SshCredentialService>();
         services.AddScoped<ISshService, SshService>();
+        services.AddScoped<ISftpService, SftpService>();
         services.AddScoped<IDropletManagementService, DropletManagementService>();
 
         // Real notifier is registered by the web host (SignalR); fall back to a no-op if absent.

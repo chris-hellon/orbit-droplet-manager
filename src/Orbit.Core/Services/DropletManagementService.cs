@@ -34,9 +34,17 @@ public interface IDropletManagementService
 
     Task<SshTestResultDto> TestAsync(long dropletId, CancellationToken ct = default);
     Task<string> ResolveHostAsync(long dropletId, CancellationToken ct = default);
+
+    // --- files (SFTP) ---
+    Task<DirectoryListingDto> ListFilesAsync(long dropletId, string? path, CancellationToken ct = default);
+    Task UploadFileAsync(long dropletId, string directory, string fileName, Stream content, CancellationToken ct = default);
+    Task DownloadFileAsync(long dropletId, string path, Stream destination, CancellationToken ct = default);
+    Task<DirectoryListingDto> MakeDirectoryAsync(long dropletId, string directory, string name, CancellationToken ct = default);
+    Task<DirectoryListingDto> DeleteFileAsync(long dropletId, string path, CancellationToken ct = default);
+    Task<DirectoryListingDto> RenameFileAsync(long dropletId, string path, string newName, CancellationToken ct = default);
 }
 
-public sealed partial class DropletManagementService(IDropletService droplets, ISshService ssh, DropletStateCache cache, IActivityRecorder activity) : IDropletManagementService
+public sealed partial class DropletManagementService(IDropletService droplets, ISshService ssh, ISftpService sftp, DropletStateCache cache, IActivityRecorder activity) : IDropletManagementService
 {
     [GeneratedRegex(@"^[a-zA-Z0-9_.@:\-\\]+$")]
     private static partial Regex UnitNameRegex();

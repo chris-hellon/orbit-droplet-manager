@@ -327,6 +327,69 @@
                         </div>
                         break;
 
+                    case "Files":
+                        <div class="list-wrap">
+                            <div class="files-bar">
+                                <button class="btn btn-ghost btn-sm" title="Up one level" @onclick="GoUpAsync" disabled="@(_filesBusy || _fileListing?.Parent is null)">↑</button>
+                                <input class="input mono files-path" @bind="_pathInput" @onkeydown="PathKeyDown" placeholder="/path" />
+                                <button class="btn btn-ghost btn-sm" @onclick="() => LoadFilesAsync(_pathInput)" disabled="@_filesBusy">Go</button>
+                                <button class="btn btn-ghost btn-sm" title="Refresh" @onclick="RefreshFilesAsync" disabled="@_filesBusy">↻</button>
+                                <span class="files-spacer"></span>
+                                <button class="btn btn-sm" @onclick="BeginNewFolder" disabled="@_filesBusy">New folder</button>
+                                <label class="btn btn-primary btn-sm file-upload-btn @(_filesBusy ? "is-disabled" : "")">
+                                    @if (_uploading) { <span class="spinner"></span> } Upload
+                                    <InputFile OnChange="OnUploadChange" multiple disabled="@_filesBusy" />
+                                </label>
+                            </div>
+
+                            @if (_filesError is not null) { <div class="alert alert-error" style="margin:.4rem 0;">@_filesError</div> }
+                            @if (_uploadStatus is not null) { <div class="alert alert-info" style="margin:.4rem 0;">@_uploadStatus</div> }
+
+                            @if (_filesLoading)
+                            {
+                                <div class="loading-center"><span class="spinner"></span></div>
+                            }
+                            else if (_fileListing is { } listing)
+                            {
+                                <table class="files-table">
+                                    <thead>
+                                        <tr><th class="ico-col"></th><th>Name</th><th class="num">Size</th><th>Modified</th><th class="perms-col">Permissions</th><th class="act-col"></th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @if (listing.Parent is { } parent)
+                                        {
+                                            <tr class="file-row dir" @onclick="() => LoadFilesAsync(parent)">
+                                                <td class="ico-col">📁</td><td class="mono">..</td><td></td><td></td><td class="perms-col"></td><td></td>
+                                            </tr>
+                                        }
+                                        @foreach (var e in listing.Entries)
+                                        {
+                                            <tr class="file-row @(e.IsDirectory ? "dir" : "")" @onclick="() => OnEntryClick(e)">
+                                                <td class="ico-col">@(e.IsDirectory ? "📁" : e.IsSymlink ? "🔗" : "📄")</td>
+                                                <td class="mono name-col">@e.Name</td>
+                                                <td class="num faint">@(e.IsDirectory ? "" : HumanSize(e.Size))</td>
+                                                <td class="faint">@e.Modified.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                                <td class="mono perms-col faint">@e.Permissions</td>
+                                                <td class="act-col" @onclick:stopPropagation="true">
+                                                    @if (!e.IsDirectory)
+                                                    {
+                                                        <a class="btn btn-ghost btn-sm" title="Download" href="@DownloadUrl(e)">⭳</a>
+                                                    }
+                                                    <button class="btn btn-ghost btn-sm" title="Rename" @onclick="() => BeginRename(e)" disabled="@_filesBusy">✎</button>
+                                                    <button class="btn btn-ghost btn-sm" title="Delete" @onclick="() => _confirmDelete = e" disabled="@_filesBusy">✕</button>
+                                                </td>
+                                            </tr>
+                                        }
+                                        @if (listing.Entries.Count == 0)
+                                        {
+                                            <tr><td colspan="6" class="faint" style="padding:1.25rem; text-align:center;">This folder is empty.</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                        </div>
+                        break;
+
                     case "Services":
                         <div class="list-wrap">
                             <div class="row" style="margin-bottom:1rem; flex-wrap:wrap;">
@@ -644,10 +707,55 @@
                Message="@($"This ERASES everything on “{_droplet?.Name}” and reinstalls it. This cannot be undone — make sure you have a snapshot if you need the data.")"
                ConfirmText="Erase & rebuild" OnConfirm="DoRebuildAsync" OnCancel="() => _confirmRebuild = false" />
 
+<ConfirmDialog Visible="_confirmDelete is not null" Danger="true" Busy="_filesBusy"
+               Title="@($"Delete {(_confirmDelete?.IsDirectory == true ? "folder" : "file")}?")"
+               Message="@($"“{_confirmDelete?.Name}” will be permanently deleted from the droplet.{(_confirmDelete?.IsDirectory == true ? " The folder must be empty." : "")}")"
+               ConfirmText="Delete" OnConfirm="DeleteEntryAsync" OnCancel="() => _confirmDelete = null" />
+
+@if (_newFolder)
+{
+    <div class="modal-backdrop" @onclick="() => _newFolder = false">
+        <div class="modal card" @onclick:stopPropagation="true" style="width:min(420px,94vw);">
+            <h3>New folder</h3>
+            <p class="faint" style="margin-top:0;">Created in <span class="mono">@(_fileListing?.Path ?? "/")</span>.</p>
+            @if (_filesError is not null) { <div class="alert alert-error" style="margin-bottom:.75rem;">@_filesError</div> }
+            <div class="form-field">
+                <input class="input mono" @bind="_newFolderName" @onkeydown="NewFolderKeyDown" placeholder="folder-name" />
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" @onclick="() => _newFolder = false" disabled="@_filesBusy">Cancel</button>
+                <button class="btn btn-primary" @onclick="CreateFolderAsync" disabled="@(_filesBusy || string.IsNullOrWhiteSpace(_newFolderName))">
+                    @if (_filesBusy) { <span class="spinner"></span> } Create
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_renameTarget is { } rt)
+{
+    <div class="modal-backdrop" @onclick="() => _renameTarget = null">
+        <div class="modal card" @onclick:stopPropagation="true" style="width:min(420px,94vw);">
+            <h3>Rename</h3>
+            <p class="faint" style="margin-top:0;">Renaming <span class="mono">@rt.Name</span>.</p>
+            @if (_filesError is not null) { <div class="alert alert-error" style="margin-bottom:.75rem;">@_filesError</div> }
+            <div class="form-field">
+                <input class="input mono" @bind="_renameName" @onkeydown="RenameKeyDown" />
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" @onclick="() => _renameTarget = null" disabled="@_filesBusy">Cancel</button>
+                <button class="btn btn-primary" @onclick="DoRenameAsync" disabled="@(_filesBusy || string.IsNullOrWhiteSpace(_renameName))">
+                    @if (_filesBusy) { <span class="spinner"></span> } Rename
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter] public long Id { get; set; }
 
-    private static readonly string[] Tabs = ["Overview", "Websites", "Firewall", "Database", "Services", "Logs", "Terminal"];
+    private static readonly string[] Tabs = ["Overview", "Websites", "Firewall", "Database", "Files", "Services", "Logs", "Terminal"];
 
     private DropletDto? _droplet;
     private bool _loading = true;
@@ -726,6 +834,21 @@
     private string? _log;
     private bool _logLoading;
 
+    // ---- files (SFTP) ----
+    private const long MaxUploadBytes = 2L * 1024 * 1024 * 1024; // 2 GB per file
+    private DirectoryListingDto? _fileListing;
+    private string _pathInput = "";
+    private bool _filesLoading;
+    private bool _filesBusy;
+    private bool _uploading;
+    private string? _filesError;
+    private string? _uploadStatus;
+    private bool _newFolder;
+    private string _newFolderName = "";
+    private FileEntryDto? _renameTarget;
+    private string _renameName = "";
+    private FileEntryDto? _confirmDelete;
+
     private List<ServiceUnitDto> FilteredServices
     {
         get
@@ -738,7 +861,7 @@
         }
     }
 
-    private static bool RequiresSsh(string tab) => tab is "Websites" or "Firewall" or "Database" or "Services" or "Logs" or "Terminal";
+    private static bool RequiresSsh(string tab) => tab is "Websites" or "Firewall" or "Database" or "Files" or "Services" or "Logs" or "Terminal";
 
     protected override async Task OnInitializedAsync()
     {
@@ -806,6 +929,7 @@
         if (tab == "Websites" && _sites.Count == 0) await LoadSitesAsync();
         if (tab == "Firewall" && _firewall is null) await LoadFirewallAsync();
         if (tab == "Database" && _db is null) await LoadDbAsync();
+        if (tab == "Files" && _fileListing is null) await LoadFilesAsync(null);
     }
 
     private async Task LoadServicesAsync()
@@ -878,6 +1002,148 @@
 
     private static string StateClass(ServiceUnitDto s) => s.IsRunning ? "health-healthy" : s.IsFailed ? "health-critical" : "health-unknown";
     private static string StateDot(ServiceUnitDto s) => s.IsRunning ? "bg-healthy" : s.IsFailed ? "bg-critical" : "bg-unknown";
+
+    // ---- Files (SFTP) ----
+
+    private string CurrentDir => _fileListing?.Path ?? "/";
+    private string ChildPath(string name) => CurrentDir == "/" ? $"/{name}" : $"{CurrentDir}/{name}";
+    private string DownloadUrl(FileEntryDto e) => OrbitApiClient.FileDownloadUrl(Id, ChildPath(e.Name));
+
+    private async Task LoadFilesAsync(string? path)
+    {
+        _filesLoading = true;
+        _filesError = null;
+        StateHasChanged();
+        try
+        {
+            _fileListing = await Api.ListFilesAsync(Id, path);
+            _pathInput = _fileListing.Path;
+        }
+        catch (Exception ex) { _filesError = ex.Message; }
+        finally { _filesLoading = false; }
+    }
+
+    private Task RefreshFilesAsync() => LoadFilesAsync(CurrentDir);
+
+    private Task GoUpAsync() => _fileListing?.Parent is { } parent ? LoadFilesAsync(parent) : Task.CompletedTask;
+
+    private Task OnEntryClick(FileEntryDto e) => e.IsDirectory ? LoadFilesAsync(ChildPath(e.Name)) : Task.CompletedTask;
+
+    private async Task PathKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_pathInput)) await LoadFilesAsync(_pathInput);
+    }
+
+    private void BeginNewFolder()
+    {
+        _newFolderName = "";
+        _filesError = null;
+        _newFolder = true;
+    }
+
+    private async Task NewFolderKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_newFolderName)) await CreateFolderAsync();
+    }
+
+    private async Task CreateFolderAsync()
+    {
+        _filesBusy = true;
+        _filesError = null;
+        try
+        {
+            _fileListing = await Api.MakeDirAsync(Id, CurrentDir, _newFolderName.Trim());
+            _newFolder = false;
+        }
+        catch (Exception ex) { _filesError = ex.Message; }
+        finally { _filesBusy = false; }
+    }
+
+    private void BeginRename(FileEntryDto e)
+    {
+        _renameTarget = e;
+        _renameName = e.Name;
+        _filesError = null;
+    }
+
+    private async Task RenameKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_renameName)) await DoRenameAsync();
+    }
+
+    private async Task DoRenameAsync()
+    {
+        if (_renameTarget is null) return;
+        _filesBusy = true;
+        _filesError = null;
+        try
+        {
+            _fileListing = await Api.RenameFileAsync(Id, ChildPath(_renameTarget.Name), _renameName.Trim());
+            _renameTarget = null;
+        }
+        catch (Exception ex) { _filesError = ex.Message; }
+        finally { _filesBusy = false; }
+    }
+
+    private async Task DeleteEntryAsync()
+    {
+        if (_confirmDelete is null) return;
+        _filesBusy = true;
+        _filesError = null;
+        try
+        {
+            _fileListing = await Api.DeleteFileAsync(Id, ChildPath(_confirmDelete.Name));
+            _confirmDelete = null;
+        }
+        catch (Exception ex) { _filesError = ex.Message; _confirmDelete = null; }
+        finally { _filesBusy = false; }
+    }
+
+    private async Task OnUploadChange(InputFileChangeEventArgs e)
+    {
+        var files = e.GetMultipleFiles(100);
+        var dir = CurrentDir;
+        _uploading = true;
+        _filesBusy = true;
+        _filesError = null;
+        var done = 0;
+        var failures = new List<string>();
+        try
+        {
+            foreach (var file in files)
+            {
+                _uploadStatus = $"Uploading {done + 1} of {files.Count}: {file.Name}";
+                StateHasChanged();
+                try
+                {
+                    await using var stream = file.OpenReadStream(MaxUploadBytes);
+                    _fileListing = await Api.UploadFileAsync(Id, dir, file.Name, stream);
+                }
+                catch (Exception ex) { failures.Add($"{file.Name}: {ex.Message}"); }
+                done++;
+            }
+        }
+        finally
+        {
+            _uploading = false;
+            _filesBusy = false;
+            _uploadStatus = failures.Count == 0
+                ? $"Uploaded {done - failures.Count} file(s)."
+                : null;
+            if (failures.Count > 0) _filesError = "Some uploads failed — " + string.Join("; ", failures);
+            // Make sure the listing reflects the directory we uploaded into.
+            if (_fileListing is null || _fileListing.Path != dir) await LoadFilesAsync(dir);
+        }
+    }
+
+    private static string HumanSize(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double size = bytes;
+        var u = 0;
+        while (size >= 1024 && u < units.Length - 1) { size /= 1024; u++; }
+        return u == 0 ? $"{bytes} B" : $"{size:0.#} {units[u]}";
+    }
 
     // ---- Websites ----
 

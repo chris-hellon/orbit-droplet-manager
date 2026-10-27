@@ -40,6 +40,8 @@ Click a droplet → **Manage**, and you get tabs for:
   (with a generated password shown once).
 - **Services** — systemd units, filtered to *your* app/web/db services by default; start / stop / restart,
   and per-service `journalctl` logs.
+- **Files** — a file manager over **SFTP** (same SSH key, no FTP daemon): browse the filesystem,
+  upload one or many files, download, make folders, rename, and delete.
 - **Logs** — tail nginx access/error, syslog, or a service's journal.
 - **Terminal** — a full interactive **SSH shell** in the browser (xterm.js).
 

@@ -36,6 +36,14 @@ public static class ApiRoutes
         public static string FirewallRule(long id, int number) => $"{Base}/droplets/{id}/firewall/{number}"; // DELETE
         public static string FirewallToggle(long id) => $"{Base}/droplets/{id}/firewall/toggle"; // POST
 
+        // --- file manager (SFTP) ---
+        public static string Files(long id) => $"{Base}/droplets/{id}/files";                 // GET ?path= list, DELETE via files/delete
+        public static string FilesUpload(long id) => $"{Base}/droplets/{id}/files/upload";     // POST raw body ?path=&name=
+        public static string FilesDownload(long id) => $"{Base}/droplets/{id}/files/download"; // GET ?path=
+        public static string FilesMkdir(long id) => $"{Base}/droplets/{id}/files/mkdir";       // POST
+        public static string FilesRename(long id) => $"{Base}/droplets/{id}/files/rename";     // POST
+        public static string FilesDelete(long id) => $"{Base}/droplets/{id}/files/delete";     // POST
+
         public static string Db(long id) => $"{Base}/droplets/{id}/db";                            // GET overview
         public static string DbDatabases(long id) => $"{Base}/droplets/{id}/db/databases";          // POST create
         public static string DbDatabase(long id, string name) => $"{Base}/droplets/{id}/db/databases/{Uri.EscapeDataString(name)}"; // DELETE
