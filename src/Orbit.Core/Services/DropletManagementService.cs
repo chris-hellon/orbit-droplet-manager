@@ -304,9 +304,31 @@ public sealed partial class DropletManagementService(IDropletService droplets, I
             $"if nginx -t 2>&1; then systemctl reload nginx && echo 'SITE_CREATED'; else rm -f {enabled}; echo 'REVERTED: nginx config test failed'; exit 1; fi";
 
         var result = await ssh.RunAsync(host, command, ct);
-        if (result.ExitStatus == 0)
-            await activity.RecordAsync("site", $"Added website {domain}", dropletId, "success", ct);
-        return ToCommandResult(result);
+        if (result.ExitStatus != 0)
+            return ToCommandResult(result);
+
+        await activity.RecordAsync("site", $"Added website {domain}", dropletId, "success", ct);
+
+        // Smart check: for a reverse-proxy site, see whether anything is actually listening on the
+        // upstream port — a dead upstream is the usual cause of a 502 right after creating a site.
+        var output = $"Website {domain} created.";
+        if (request.Mode != "static" && request.UpstreamPort is { } upstream)
+        {
+            var probe = await ssh.RunAsync(host,
+                $"curl -s -o /dev/null -w '%{{http_code}}' --max-time 4 http://127.0.0.1:{upstream} || true", ct);
+            if (probe.Output.Trim() is "" or "000")
+                output += $"\n\n⚠ nginx is live, but nothing is responding on 127.0.0.1:{upstream} yet — " +
+                          $"you'll get a 502 until your app is running and listening on that port. " +
+                          $"(If this site should just serve files, recreate it as a Static site instead.)";
+            else
+                output += $"\nUpstream on 127.0.0.1:{upstream} is responding.";
+        }
+        else if (request.Mode == "static")
+        {
+            output += " Serving static files — upload your content from the site's Files area.";
+        }
+
+        return new CommandResultDto { ExitStatus = 0, Output = output };
     }
 
     public async Task<CommandResultDto> EnableHttpsAsync(long dropletId, string domain, string email, CancellationToken ct = default)

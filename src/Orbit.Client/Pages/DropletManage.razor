@@ -140,6 +140,160 @@
                         </div>
                         break;
 
+                    case "Websites" when _selectedSite is { } site:
+                        <div class="list-wrap">
+                            <div class="row spread" style="margin-bottom:1.25rem;">
+                                <button class="btn btn-ghost btn-sm" @onclick="CloseSite">← All websites</button>
+                                <a class="btn btn-ghost btn-sm" href="@SiteUrl(site)" target="_blank" rel="noopener">Visit ↗</a>
+                            </div>
+
+                            @if (_actionResult is not null)
+                            {
+                                <div class="alert @(_actionResult.Output.Contains('⚠') ? "alert-error" : "alert-success")" style="margin-bottom:1.25rem; white-space:pre-wrap;">@_actionResult.Output</div>
+                            }
+
+                            <div class="site-head">
+                                <div style="min-width:0;">
+                                    <h2 class="site-title">@site.PrimaryDomain</h2>
+                                    <div class="faint mono" style="font-size:.8rem;">@string.Join(", ", site.Domains)</div>
+                                </div>
+                                @if (site.Ssl)
+                                {
+                                    <span class="health-badge @SslClass(site)"><span class="dot @SslDot(site)"></span>@SslLabel(site)</span>
+                                }
+                                else
+                                {
+                                    <span class="health-badge health-unknown"><span class="dot bg-unknown"></span>No SSL</span>
+                                }
+                            </div>
+
+                            <div class="site-cols">
+                                <div class="site-col">
+                                    <div class="site-section">
+                                        <dl class="kv">
+                                            @if (site.ProxyPass is { Length: > 0 })
+                                            {
+                                                <dt>Proxies to</dt><dd class="mono">@site.ProxyPass</dd>
+                                            }
+                                            @if (site.Root is { Length: > 0 })
+                                            {
+                                                <dt>Root</dt><dd class="mono">@site.Root</dd>
+                                            }
+                                            <dt>Listen</dt><dd class="mono">@site.Listen</dd>
+                                            @if (site.SslExpiresAt is { } exp)
+                                            {
+                                                <dt>SSL expires</dt><dd>@exp.ToLocalTime().ToString("yyyy-MM-dd") <span class="@SslClass(site)">(@site.SslDaysLeft days)</span></dd>
+                                            }
+                                            <dt>Config</dt><dd class="mono" style="font-size:.74rem;">@site.ConfigPath</dd>
+                                        </dl>
+                                    </div>
+
+                                    <div class="site-section">
+                                        <div class="site-section-head">DNS</div>
+                                        @if (_dnsLoading)
+                                        {
+                                            <span class="spinner"></span>
+                                        }
+                                        else if (_siteZone is null)
+                                        {
+                                            <div class="alert alert-info" style="margin-bottom:.6rem;">
+                                                <b>@site.PrimaryDomain</b>'s DNS isn't hosted on DigitalOcean, so Orbit can't change its records for you.
+                                                Add the record(s) below at whoever runs this domain's DNS (your registrar or DNS host), then come back and enable HTTPS.
+                                            </div>
+                                            @if (DnsInstructions(site) is { Count: > 0 } recs)
+                                            {
+                                                <div class="dns-guide">
+                                                    <div class="dns-guide-head">
+                                                        <span>Type</span><span>Name / Host</span><span>Value</span><span>TTL</span><span></span>
+                                                    </div>
+                                                    @foreach (var r in recs)
+                                                    {
+                                                        <div class="dns-guide-row">
+                                                            <span class="tag">@r.Type</span>
+                                                            <span class="mono">@r.Name</span>
+                                                            <span class="mono">@r.Value</span>
+                                                            <span class="mono faint">@r.Ttl</span>
+                                                            <button class="btn btn-ghost btn-sm" title="Copy value" @onclick="() => CopyAsync(r.Value)">@(_copied == r.Value ? "✓" : "⧉")</button>
+                                                        </div>
+                                                    }
+                                                </div>
+                                                <p class="hint" style="margin-top:.5rem;">
+                                                    Some providers want just the host label (e.g. <span class="mono">@HostLabel(site)</span> or <span class="mono">@@</span> for the root);
+                                                    others want the full name shown above. DNS changes can take anywhere from a few minutes to a few hours to take effect.
+                                                    Enable HTTPS once <span class="mono">@site.PrimaryDomain</span> resolves to this droplet.
+                                                </p>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <p class="faint" style="font-size:.8rem; margin-top:0;">Zone <b>@_siteZone.Name</b> · record <span class="mono">@_siteSub</span></p>
+                                            @if (_dnsError is not null)
+                                            {
+                                                <div class="alert alert-error" style="margin-bottom:.5rem;">@_dnsError</div>
+                                            }
+                                            @foreach (var rec in MatchingRecords)
+                                            {
+                                                <div class="spread res-row">
+                                                    <span class="mono" style="font-size:.8rem;"><span class="tag">@rec.Type</span> @rec.Data</span>
+                                                    <button class="btn btn-ghost btn-sm" @onclick="() => DeleteDnsRecordAsync(rec)" disabled="@_dnsBusy">✕</button>
+                                                </div>
+                                            }
+                                            @if (MatchingRecords.Count == 0)
+                                            {
+                                                <p class="faint" style="font-size:.8rem;">Nothing points <span class="mono">@SiteFqdn</span> here yet.</p>
+                                            }
+                                            @if (_droplet?.PublicIpv4 is { Length: > 0 } ip)
+                                            {
+                                                <button class="btn btn-primary btn-sm" style="margin-top:.5rem;" @onclick="PointAtDropletAsync" disabled="@_dnsBusy">
+                                                    @if (_dnsBusy) { <span class="spinner"></span> }
+                                                    Point @SiteFqdn at this droplet (@ip)
+                                                </button>
+                                            }
+                                        }
+                                    </div>
+
+                                    <div class="site-section">
+                                        <div class="site-section-head">HTTPS</div>
+                                        @if (site.Ssl)
+                                        {
+                                            <p class="faint" style="font-size:.8rem; margin-top:0;">HTTPS is enabled@(site.SslExpiresAt is { } e ? $", valid until {e:yyyy-MM-dd}" : "").</p>
+                                        }
+                                        <div class="row" style="flex-wrap:wrap;">
+                                            <input class="input mono" style="max-width:220px;" placeholder="you@@email.com" @bind="_httpsEmail" />
+                                            <button class="btn btn-sm" @onclick="() => EnableHttpsAsync(site.PrimaryDomain)" disabled="@(_httpsBusy || string.IsNullOrWhiteSpace(_httpsEmail))">
+                                                @if (_httpsBusy) { <span class="spinner"></span> }
+                                                @(site.Ssl ? "Renew certificate" : "Enable HTTPS")
+                                            </button>
+                                        </div>
+                                        <p class="hint">Needs the domain's DNS pointed at this droplet and port 80 reachable. Uses certbot + Let's Encrypt.</p>
+                                        @if (_httpsResult is not null)
+                                        {
+                                            <pre class="logview" style="height:160px; flex:none; margin-top:.5rem;">@_httpsResult.Output</pre>
+                                        }
+                                    </div>
+                                </div>
+
+                                <div class="site-col">
+                                    <div class="site-section">
+                                        <div class="site-section-head">Files</div>
+                                        @if (site.Root is { Length: > 0 } siteRoot)
+                                        {
+                                            <FileBrowser DropletId="Id" StartPath="@siteRoot" Scope="@siteRoot" @key="@($"site-files-{siteRoot}")" />
+                                        }
+                                        else
+                                        {
+                                            <p class="faint" style="font-size:.8rem; margin-top:0;">
+                                                This is a reverse-proxy site, so it has no document root to browse —
+                                                its content is served by the app on <span class="mono">@(site.ProxyPass ?? "its upstream")</span>.
+                                                Use the <b>Files</b> tab to browse the whole droplet.
+                                            </p>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        break;
+
                     case "Websites":
                         <div class="list-wrap">
                             <div class="row spread" style="margin-bottom:1rem;">
@@ -453,148 +607,6 @@
                 </div>
             }
         </div>
-
-        <div class="detail-panel @(_sitePanelOpen ? "open" : "")">
-            @if (_selectedSite is { } site)
-            {
-                <div class="detail-head">
-                    <div>
-                        <div class="detail-title">@site.PrimaryDomain</div>
-                        <div class="detail-sub">nginx site</div>
-                        <div style="margin-top:.5rem;">
-                            @if (site.Ssl)
-                            {
-                                <span class="health-badge @SslClass(site)"><span class="dot @SslDot(site)"></span>@SslLabel(site)</span>
-                            }
-                            else
-                            {
-                                <span class="health-badge health-unknown"><span class="dot bg-unknown"></span>No SSL</span>
-                            }
-                        </div>
-                    </div>
-                    <button class="btn btn-ghost btn-sm" @onclick="() => _sitePanelOpen = false">✕</button>
-                </div>
-                <div class="detail-body">
-                    <dl class="kv">
-                        <dt>Domains</dt><dd>@string.Join(", ", site.Domains)</dd>
-                        @if (site.ProxyPass is { Length: > 0 })
-                        {
-                            <dt>Proxies to</dt><dd class="mono">@site.ProxyPass</dd>
-                        }
-                        @if (site.Root is { Length: > 0 })
-                        {
-                            <dt>Root</dt><dd class="mono">@site.Root</dd>
-                        }
-                        <dt>Listen</dt><dd class="mono">@site.Listen</dd>
-                        @if (site.SslExpiresAt is { } exp)
-                        {
-                            <dt>SSL expires</dt><dd>@exp.ToLocalTime().ToString("yyyy-MM-dd") <span class="@SslClass(site)">(@site.SslDaysLeft days)</span></dd>
-                        }
-                        <dt>Config</dt><dd class="mono" style="font-size:.74rem;">@site.ConfigPath</dd>
-                    </dl>
-
-                    <div>
-                        <div class="faint" style="font-size:.76rem; margin-bottom:.5rem;">DNS</div>
-                        @if (_dnsLoading)
-                        {
-                            <span class="spinner"></span>
-                        }
-                        else if (_siteZone is null)
-                        {
-                            <div class="alert alert-info" style="margin-bottom:.6rem;">
-                                <b>@site.PrimaryDomain</b>'s DNS isn't hosted on DigitalOcean, so Orbit can't change its records for you.
-                                Add the record(s) below at whoever runs this domain's DNS (your registrar or DNS host), then come back and enable HTTPS.
-                            </div>
-                            @if (DnsInstructions(site) is { Count: > 0 } recs)
-                            {
-                                <div class="dns-guide">
-                                    <div class="dns-guide-head">
-                                        <span>Type</span><span>Name / Host</span><span>Value</span><span>TTL</span><span></span>
-                                    </div>
-                                    @foreach (var r in recs)
-                                    {
-                                        <div class="dns-guide-row">
-                                            <span class="tag">@r.Type</span>
-                                            <span class="mono">@r.Name</span>
-                                            <span class="mono">@r.Value</span>
-                                            <span class="mono faint">@r.Ttl</span>
-                                            <button class="btn btn-ghost btn-sm" title="Copy value" @onclick="() => CopyAsync(r.Value)">@(_copied == r.Value ? "✓" : "⧉")</button>
-                                        </div>
-                                    }
-                                </div>
-                                <p class="hint" style="margin-top:.5rem;">
-                                    Some providers want just the host label (e.g. <span class="mono">@HostLabel(site)</span> or <span class="mono">@@</span> for the root);
-                                    others want the full name shown above. DNS changes can take anywhere from a few minutes to a few hours to take effect.
-                                    Enable HTTPS once <span class="mono">@site.PrimaryDomain</span> resolves to this droplet.
-                                </p>
-                            }
-                        }
-                        else
-                        {
-                            <p class="faint" style="font-size:.8rem; margin-top:0;">Zone <b>@_siteZone.Name</b> · record <span class="mono">@_siteSub</span></p>
-                            @if (_dnsError is not null)
-                            {
-                                <div class="alert alert-error" style="margin-bottom:.5rem;">@_dnsError</div>
-                            }
-                            @foreach (var rec in MatchingRecords)
-                            {
-                                <div class="spread res-row">
-                                    <span class="mono" style="font-size:.8rem;"><span class="tag">@rec.Type</span> @rec.Data</span>
-                                    <button class="btn btn-ghost btn-sm" @onclick="() => DeleteDnsRecordAsync(rec)" disabled="@_dnsBusy">✕</button>
-                                </div>
-                            }
-                            @if (MatchingRecords.Count == 0)
-                            {
-                                <p class="faint" style="font-size:.8rem;">Nothing points <span class="mono">@SiteFqdn</span> here yet.</p>
-                            }
-                            @if (_droplet?.PublicIpv4 is { Length: > 0 } ip)
-                            {
-                                <button class="btn btn-primary btn-sm" style="margin-top:.5rem;" @onclick="PointAtDropletAsync" disabled="@_dnsBusy">
-                                    @if (_dnsBusy) { <span class="spinner"></span> }
-                                    Point @SiteFqdn at this droplet (@ip)
-                                </button>
-                            }
-                        }
-                    </div>
-
-                    <div>
-                        <div class="faint" style="font-size:.76rem; margin-bottom:.5rem;">HTTPS</div>
-                        @if (site.Ssl)
-                        {
-                            <p class="faint" style="font-size:.8rem; margin-top:0;">HTTPS is enabled@(site.SslExpiresAt is { } e ? $", valid until {e:yyyy-MM-dd}" : "").</p>
-                        }
-                        <div class="row" style="flex-wrap:wrap;">
-                            <input class="input mono" style="max-width:220px;" placeholder="you@@email.com" @bind="_httpsEmail" />
-                            <button class="btn btn-sm" @onclick="() => EnableHttpsAsync(site.PrimaryDomain)" disabled="@(_httpsBusy || string.IsNullOrWhiteSpace(_httpsEmail))">
-                                @if (_httpsBusy) { <span class="spinner"></span> }
-                                @(site.Ssl ? "Renew certificate" : "Enable HTTPS")
-                            </button>
-                        </div>
-                        <p class="hint">Needs the domain's DNS pointed at this droplet and port 80 reachable. Uses certbot + Let's Encrypt.</p>
-                        @if (_httpsResult is not null)
-                        {
-                            <pre class="logview" style="height:160px; flex:none; margin-top:.5rem;">@_httpsResult.Output</pre>
-                        }
-                    </div>
-
-                    <div>
-                        <div class="faint" style="font-size:.76rem; margin-bottom:.5rem;">FILES</div>
-                        @if (site.Root is { Length: > 0 } siteRoot)
-                        {
-                            <FileBrowser DropletId="Id" StartPath="@siteRoot" Scope="@siteRoot" @key="@($"site-files-{siteRoot}")" />
-                        }
-                        else
-                        {
-                            <p class="faint" style="font-size:.8rem; margin-top:0;">
-                                This is a reverse-proxy site, so it has no document root to browse —
-                                its content is served by the app on <span class="mono">@(site.ProxyPass ?? "its upstream")</span>.
-                                Use the <b>Files</b> tab to browse the whole droplet.
-                            </p>
-                        }
-                    </div>
-                </div>
-            }
-        </div>
     </div>
 </div>
 
@@ -614,18 +626,28 @@
                 <input class="input mono" @bind="_newSite.Aliases" placeholder="www.example.com" />
             </div>
             <div class="form-field">
-                <label>Type</label>
+                <label>What kind of site?</label>
                 <div class="segmented">
-                    <button type="button" class="@(_newSite.Mode == "proxy" ? "active" : "")" @onclick='() => _newSite.Mode = "proxy"'>Reverse proxy</button>
                     <button type="button" class="@(_newSite.Mode == "static" ? "active" : "")" @onclick='() => _newSite.Mode = "static"'>Static files</button>
+                    <button type="button" class="@(_newSite.Mode == "proxy" ? "active" : "")" @onclick='() => _newSite.Mode = "proxy"'>Reverse proxy</button>
                 </div>
+                <span class="hint">
+                    @if (_newSite.Mode == "static")
+                    {
+                        <span>Serve HTML / assets from a folder — a plain website with no app behind it. Orbit sets the folder up for you.</span>
+                    }
+                    else
+                    {
+                        <span>Forward requests to an app you're running on this droplet (e.g. a Node/.NET/Python server). The app must be running and listening on the port below, or you'll get a 502.</span>
+                    }
+                </span>
             </div>
             @if (_newSite.Mode == "proxy")
             {
                 <div class="form-field">
                     <label>App port on this server</label>
                     <input class="input mono" type="number" @bind="_newSite.UpstreamPort" placeholder="5000" />
-                    <span class="hint">nginx proxies to http://127.0.0.1:&lt;port&gt;.</span>
+                    <span class="hint">nginx proxies to <span class="mono">http://127.0.0.1:&lt;port&gt;</span>. Orbit checks the port right after creating and warns if nothing's listening.</span>
                 </div>
             }
             else
@@ -693,7 +715,6 @@
     private readonly List<SiteDto> _sites = [];
     private bool _sitesLoading;
     private SiteDto? _selectedSite;
-    private bool _sitePanelOpen;
     private List<DomainDto>? _doDomains;
     private DomainDto? _siteZone;
     private string _siteSub = "";
@@ -703,7 +724,7 @@
     private string? _dnsError;
 
     private bool _addSite;
-    private readonly CreateSiteRequest _newSite = new() { Mode = "proxy" };
+    private readonly CreateSiteRequest _newSite = new() { Mode = "static" };
     private bool _addSiteBusy;
     private string? _addSiteError;
     private CommandResultDto? _actionResult;
@@ -979,10 +1000,20 @@
     private async Task OpenSite(SiteDto site)
     {
         _selectedSite = site;
-        _sitePanelOpen = true;
         _dnsError = null;
+        _httpsResult = null;
+        _actionResult = null;
         await ResolveDnsAsync(site);
     }
+
+    private void CloseSite()
+    {
+        _selectedSite = null;
+        _httpsResult = null;
+        _actionResult = null;
+    }
+
+    private static string SiteUrl(SiteDto site) => $"{(site.Ssl ? "https" : "http")}://{site.PrimaryDomain}";
 
     private async Task ResolveDnsAsync(SiteDto site)
     {
@@ -1059,16 +1090,17 @@
             var result = await Api.CreateSiteAsync(Id, _newSite);
             if (result.Ok)
             {
-                _actionResult = result;
                 _addSite = false;
                 _newSite.Domain = "";
                 _newSite.Aliases = null;
                 _newSite.UpstreamPort = null;
                 _newSite.Root = null;
                 await LoadSitesAsync();
-                // Open the new site straight away so its DNS setup instructions are front and centre.
+                // Open the new site straight away so its DNS/setup info is front and centre, then
+                // show the create result (incl. any "nothing's listening on that port" warning).
                 var created = _sites.FirstOrDefault(s => s.PrimaryDomain.Equals(domain, StringComparison.OrdinalIgnoreCase));
                 if (created is not null) await OpenSite(created);
+                _actionResult = result;
             }
             else
             {

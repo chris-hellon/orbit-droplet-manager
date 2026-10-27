@@ -428,6 +428,16 @@ table.droplets tr.row-selected { background: var(--bg-2); box-shadow: inset 2px 
 .file-row .act-col .btn { opacity: .55; text-decoration: none; }
 @media (max-width: 720px) { .files-table .perms-col { display: none; } }
 
+/* Full-width website management (replaces the cramped slide-out for sites) */
+.site-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+.site-title { margin: 0 0 .2rem; font-size: 1.35rem; overflow-wrap: anywhere; }
+.site-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 1.5rem; align-items: start; }
+.site-col { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.site-section { background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 1.1rem 1.2rem; }
+.site-section-head { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin-bottom: .7rem; }
+.site-section .kv { margin: 0; }
+@media (max-width: 1040px) { .site-cols { grid-template-columns: 1fr; } }
+
 /* ---------- Polish ---------- */
 .card { position: relative; }
 .card::before {
