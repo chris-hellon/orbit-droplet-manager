@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "orbit",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/Orbit", "--launch-profile", "http"],
+      "port": 5162
+    }
+  ]
+}

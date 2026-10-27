@@ -1,0 +1,409 @@
+@page "/"
+@rendermode RenderModes.Wasm
+@implements IAsyncDisposable
+@using Orbit.Client.Shared
+@inject OrbitApiClient Api
+@inject MetricsHubClient Hub
+@inject GlobeInterop GlobeJs
+@inject NavigationManager Nav
+
+<PageTitle>Orbit · Dashboard</PageTitle>
+
+<div class="content">
+    <div class="topbar">
+        <div>
+            <h1>Dashboard</h1>
+            <div class="sub">@SummaryText</div>
+        </div>
+        <div class="row">
+            <ViewToggle IsGlobe="true" />
+            <button class="btn btn-ghost btn-sm" @onclick="ReloadAsync" disabled="@_loading">Refresh</button>
+        </div>
+    </div>
+
+    @if (!_connected)
+    {
+        <div class="globe-stage">
+            <div class="empty-state">
+                <div class="inner">
+                    <h2>Connect your DigitalOcean account</h2>
+                    <p>Add a personal access token and Orbit will render your droplets as glowing pillars on the globe — height for CPU, colour for health.</p>
+                    <a class="btn btn-primary" href="settings">Add a token</a>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="dash-area">
+        <div class="dash-scroll">
+            @if (_error is not null)
+            {
+                <div class="alert alert-error" style="margin-bottom:1rem;">@_error</div>
+            }
+
+            <div class="stat-row">
+                <div class="card stat-tile">
+                    <div class="stat-ico ico-blue">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
+                    </div>
+                    <div class="stat-body"><span class="stat-num">@_droplets.Count</span><span class="stat-label">Droplet@(_droplets.Count == 1 ? "" : "s")</span></div>
+                </div>
+                <div class="card stat-tile">
+                    <div class="stat-ico ico-green">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    </div>
+                    <div class="stat-body"><span class="stat-num health-healthy">@HealthyCount</span><span class="stat-label">Healthy</span></div>
+                </div>
+                <div class="card stat-tile @(AttentionCount > 0 ? "stat-attn" : "")">
+                    <div class="stat-ico @(AttentionCount > 0 ? "ico-amber" : "ico-grey")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a1.8 1.8 0 0 0 1.6 2.7h17.2a1.8 1.8 0 0 0 1.6-2.7L13.7 3.9a1.8 1.8 0 0 0-3.1 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+                    </div>
+                    <div class="stat-body"><span class="stat-num @(AttentionCount > 0 ? "health-warning" : "")">@AttentionCount</span><span class="stat-label">Need attention</span></div>
+                </div>
+                <div class="card stat-tile">
+                    <div class="stat-ico ico-cyan">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                    </div>
+                    <div class="stat-body"><span class="stat-num">$@MonthlyCost.ToString("0")</span><span class="stat-label">Per month</span></div>
+                </div>
+                <div class="card stat-tile">
+                    <div class="stat-ico ico-blue">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
+                    </div>
+                    <div class="stat-body"><span class="stat-num">@RegionCount</span><span class="stat-label">Region@(RegionCount == 1 ? "" : "s")</span></div>
+                </div>
+            </div>
+
+            <div class="globe-hero">
+                <div class="globe-canvas" @ref="_container"></div>
+
+                @if (_loading && _droplets.Count == 0)
+                {
+                    <div class="loading-center"><span class="spinner"></span><span class="muted">Loading your fleet…</span></div>
+                }
+                else if (_droplets.Count == 0)
+                {
+                    <div class="empty-state"><div class="inner"><h2>No droplets found</h2><p>Spin one up on DigitalOcean and it'll appear here.</p></div></div>
+                }
+
+                <div class="globe-overlay">
+                    <div class="card globe-legend">
+                        <span class="item"><span class="dot bg-healthy"></span> Healthy</span>
+                        <span class="item"><span class="dot bg-warning"></span> Warning</span>
+                        <span class="item"><span class="dot bg-critical"></span> Critical</span>
+                        <span class="item"><span class="dot bg-unknown"></span> No data</span>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="dash-lower">
+                <div class="card dash-panel">
+                    <div class="dash-panel-head"><h2>Alerts</h2></div>
+                    <div class="dash-panel-body">
+                        @if (Alerts.Count == 0)
+                        {
+                            <div class="alert-item"><span class="dot bg-healthy"></span><span>Everything looks healthy — nothing needs attention.</span></div>
+                        }
+                        else
+                        {
+                            @foreach (var a in Alerts)
+                            {
+                                <div class="alert-item"><span class="dot @AlertDot(a.Kind)"></span><span>@a.Text</span></div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <div class="card dash-panel">
+                    <div class="dash-panel-head">
+                        <h2>Recent activity</h2>
+                        <button class="btn btn-ghost btn-sm" @onclick="LoadActivityAsync">Refresh</button>
+                    </div>
+                    <div class="dash-panel-body">
+                        @if (_activity.Count == 0)
+                        {
+                            <p class="faint" style="font-size:.85rem; margin:0;">No activity yet. Actions you take — power, snapshots, services, sites, firewall — will show up here.</p>
+                        }
+                        else
+                        {
+                            @foreach (var e in _activity)
+                            {
+                                <div class="act-item">
+                                    <span class="dot @AlertDot(e.Kind)" style="margin-top:6px;"></span>
+                                    <div class="act-text">
+                                        <div>@e.Message@(DropletName(e.DropletId) is { } n ? $" · {n}" : "")</div>
+                                        <div class="faint act-time">@e.Category · @RelativeTime(e.TimestampUtc)</div>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+
+            @if (_droplets.Count > 0)
+            {
+                <div class="dash-section-head">
+                    <h2>Your droplets</h2>
+                    <a href="droplets" class="faint" style="font-size:.85rem;">Open list view →</a>
+                </div>
+                <div class="droplet-grid">
+                    @foreach (var d in _droplets)
+                    {
+                        <div class="card dcard @(d.Health is DropletHealth.Warning or DropletHealth.Critical ? "dcard-attn" : "")"
+                             @onclick="() => OnDropletSelected(d.Id)">
+                            <div class="spread">
+                                <b style="overflow:hidden; text-overflow:ellipsis;">@d.Name</b>
+                                <HealthBadge Health="d.Health" ShowLabel="false" />
+                            </div>
+                            <div class="faint" style="font-size:.78rem; margin:.35rem 0 .7rem;">@d.RegionName · @d.SizeSlug · @d.Status</div>
+                            <div class="dcard-metrics">
+                                <div><span>CPU</span><b>@Pct(d.CpuPercent)</b></div>
+                                <div><span>RAM</span><b>@Pct(d.MemoryPercent)</b></div>
+                                <div><span>Disk</span><b>@Pct(d.DiskPercent)</b></div>
+                            </div>
+                            <a class="btn btn-sm dcard-manage" href="droplets/@d.Id" @onclick:stopPropagation="true">Manage →</a>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        <DropletDetailPanel Droplet="_selected" Open="_panelOpen" OnClose="ClosePanel" OnChanged="ReloadAsync" />
+        </div>
+    }
+</div>
+
+@code {
+    private ElementReference _container;
+    private DotNetObjectReference<Globe>? _selfRef;
+
+    private readonly List<DropletDto> _droplets = [];
+
+    private int HealthyCount => _droplets.Count(d => d.Health == DropletHealth.Healthy);
+    private int AttentionCount => _droplets.Count(d => d.Health is DropletHealth.Warning or DropletHealth.Critical);
+    private int RegionCount => _droplets.Select(d => d.RegionSlug).Distinct().Count();
+    private decimal MonthlyCost => _droplets.Sum(d => d.PriceMonthly);
+
+    private readonly List<ActivityEntryDto> _activity = [];
+
+    private List<(string Kind, string Text)> Alerts
+    {
+        get
+        {
+            var list = new List<(string, string)>();
+            foreach (var d in _droplets.Where(d => d.Health == DropletHealth.Critical))
+                list.Add(("critical", $"{d.Name} is in a critical state"));
+            foreach (var d in _droplets.Where(d => d.Health == DropletHealth.Warning))
+                list.Add(("warning", $"{d.Name} needs attention"));
+            foreach (var d in _droplets.Where(d => d.IsPoweredOn && d.Health == DropletHealth.Unknown))
+                list.Add(("info", $"{d.Name} has no monitoring data (install the DO agent)"));
+            return list;
+        }
+    }
+
+    private string? DropletName(long? id) => id is null ? null : _droplets.FirstOrDefault(d => d.Id == id)?.Name;
+
+    private static string AlertDot(string kind) => kind switch
+    {
+        "critical" => "bg-critical",
+        "warning" => "bg-warning",
+        "success" => "bg-healthy",
+        _ => "bg-unknown",
+    };
+
+    private static string RelativeTime(DateTimeOffset ts)
+    {
+        var span = DateTimeOffset.UtcNow - ts;
+        if (span.TotalSeconds < 60) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
+        return ts.ToLocalTime().ToString("MMM d");
+    }
+
+    private DropletDto? _selected;
+    private bool _panelOpen;
+
+    private bool _connected;
+    private bool _loading = true;
+    private bool _globeReady;
+    private bool _dataReady;
+    private string? _error;
+
+    private static string Pct(double? v) => v is null ? "—" : $"{v.Value:0}%";
+
+    private string SummaryText
+    {
+        get
+        {
+            if (!_connected) return "Not connected";
+            if (_loading && _droplets.Count == 0) return "Syncing…";
+            var attn = AttentionCount > 0 ? $" · {AttentionCount} need attention" : "";
+            return $"{_droplets.Count} droplet{(_droplets.Count == 1 ? "" : "s")} · {RegionCount} region{(RegionCount == 1 ? "" : "s")}{attn}";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Hub.MetricsReceived += OnMetrics;
+        Hub.DropletsRefreshed += OnDropletsRefreshed;
+
+        try
+        {
+            var status = await Api.GetConnectionStatusAsync();
+            _connected = status.Connected;
+            if (_connected)
+            {
+                await Hub.StartAsync();
+                await LoadAsync();
+                await LoadActivityAsync();
+            }
+            else
+            {
+                _loading = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _loading = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_connected && _dataReady && !_globeReady)
+        {
+            _selfRef ??= DotNetObjectReference.Create(this);
+            await GlobeJs.InitAsync(_container, _selfRef);
+            _globeReady = true;
+            await PushToGlobeAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+        try
+        {
+            var droplets = await Api.GetDropletsAsync();
+            _droplets.Clear();
+            _droplets.AddRange(droplets.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase));
+            _dataReady = true;
+        }
+        catch (Exception ex)
+        {
+            _error = ex is OrbitApiException ? ex.Message : $"Failed to load droplets: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        if (_globeReady)
+            await PushToGlobeAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        await LoadAsync();
+        await LoadActivityAsync();
+        if (_selected is not null)
+            _selected = _droplets.FirstOrDefault(d => d.Id == _selected.Id);
+        StateHasChanged();
+    }
+
+    private async Task LoadActivityAsync()
+    {
+        try
+        {
+            var items = await Api.GetActivityAsync(15);
+            _activity.Clear();
+            _activity.AddRange(items);
+            StateHasChanged();
+        }
+        catch { /* activity feed is non-critical */ }
+    }
+
+    private async Task PushToGlobeAsync()
+    {
+        if (!_globeReady) return;
+        await GlobeJs.SetDropletsAsync(_droplets.Select(ToGlobe).ToList());
+    }
+
+    private static GlobeDroplet ToGlobe(DropletDto d) => new()
+    {
+        Id = d.Id,
+        Name = d.Name,
+        Lat = d.Latitude,
+        Lng = d.Longitude,
+        Status = d.Status,
+        Health = (int)d.Health,
+        Cpu = d.CpuPercent,
+        Memory = d.MemoryPercent,
+        Disk = d.DiskPercent,
+        ActionInProgress = d.ActionInProgress,
+        IsOn = d.IsPoweredOn,
+        RegionSlug = d.RegionSlug,
+        RegionName = d.RegionName,
+        SizeSlug = d.SizeSlug,
+    };
+
+    [JSInvokable]
+    public Task OnDropletSelected(long id)
+    {
+        return InvokeAsync(async () =>
+        {
+            var d = _droplets.FirstOrDefault(x => x.Id == id);
+            if (d is null) return;
+            _selected = d;
+            _panelOpen = true;
+            StateHasChanged();
+            if (_globeReady) await GlobeJs.FocusAsync(id);
+        });
+    }
+
+    private void ClosePanel()
+    {
+        _panelOpen = false;
+        _ = GlobeJs.ResetViewAsync();
+    }
+
+    private void OnMetrics(DropletMetricsDto m)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            var i = _droplets.FindIndex(d => d.Id == m.DropletId);
+            if (i < 0) return;
+
+            _droplets[i] = _droplets[i] with
+            {
+                CpuPercent = m.CpuPercent,
+                MemoryPercent = m.MemoryPercent,
+                DiskPercent = m.DiskPercent,
+                MetricsAt = m.TimestampUtc,
+                Health = m.Health,
+            };
+
+            if (_selected?.Id == m.DropletId)
+                _selected = _droplets[i];
+
+            StateHasChanged();
+            await PushToGlobeAsync();
+        });
+    }
+
+    private void OnDropletsRefreshed() => _ = InvokeAsync(ReloadAsync);
+
+    public async ValueTask DisposeAsync()
+    {
+        Hub.MetricsReceived -= OnMetrics;
+        Hub.DropletsRefreshed -= OnDropletsRefreshed;
+        await GlobeJs.DisposeAsync();
+        _selfRef?.Dispose();
+    }
+}

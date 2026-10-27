@@ -1,0 +1,188 @@
+@page "/droplets"
+@rendermode RenderModes.Wasm
+@implements IAsyncDisposable
+@using Orbit.Client.Shared
+@inject OrbitApiClient Api
+@inject MetricsHubClient Hub
+@inject NavigationManager Nav
+
+<PageTitle>Orbit · Droplets</PageTitle>
+
+<div class="content">
+    <div class="topbar">
+        <div>
+            <h1>Droplets</h1>
+            <div class="sub">@SummaryText</div>
+        </div>
+        <div class="row">
+            <ViewToggle IsGlobe="false" />
+            <button class="btn btn-ghost btn-sm" @onclick="ReloadAsync" disabled="@_loading">Refresh</button>
+        </div>
+    </div>
+
+    <div class="globe-stage">
+        @if (!_connected)
+        {
+            <div class="empty-state">
+                <div class="inner">
+                    <h2>Connect your DigitalOcean account</h2>
+                    <p>Add a personal access token to list and manage your droplets.</p>
+                    <a class="btn btn-primary" href="settings">Add a token</a>
+                </div>
+            </div>
+        }
+        else if (_loading)
+        {
+            <div class="loading-center"><span class="spinner"></span><span class="muted">Loading…</span></div>
+        }
+        else if (_droplets.Count == 0)
+        {
+            <div class="empty-state"><div class="inner"><h2>No droplets found</h2><p>This account has no droplets yet.</p></div></div>
+        }
+        else
+        {
+            <div class="list-wrap">
+                @if (_error is not null)
+                {
+                    <div class="alert alert-error" style="margin-bottom:1rem;">@_error</div>
+                }
+                <table class="droplets">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Region</th>
+                            <th>Size</th>
+                            <th>Health</th>
+                            <th>CPU</th>
+                            <th>RAM</th>
+                            <th>Disk</th>
+                            <th>Public IP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var d in _droplets)
+                        {
+                            <tr @onclick="() => Select(d)">
+                                <td>
+                                    <div class="cell-name">
+                                        <b>@d.Name</b>
+                                        <small>@d.Status</small>
+                                    </div>
+                                </td>
+                                <td>@d.RegionName</td>
+                                <td class="mono">@d.SizeSlug</td>
+                                <td><HealthBadge Health="d.Health" /></td>
+                                <td>@Pct(d.CpuPercent)</td>
+                                <td>@Pct(d.MemoryPercent)</td>
+                                <td>@Pct(d.DiskPercent)</td>
+                                <td class="mono faint">@(d.PublicIpv4 ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <DropletDetailPanel Droplet="_selected" Open="_panelOpen" OnClose="ClosePanel" OnChanged="ReloadAsync" />
+    </div>
+</div>
+
+@code {
+    private readonly List<DropletDto> _droplets = [];
+    private DropletDto? _selected;
+    private bool _panelOpen;
+
+    private bool _connected;
+    private bool _loading = true;
+    private string? _error;
+
+    private string SummaryText => !_connected ? "Not connected"
+        : _loading ? "Syncing…"
+        : $"{_droplets.Count} droplet{(_droplets.Count == 1 ? "" : "s")}";
+
+    private static string Pct(double? v) => v is null ? "—" : $"{v.Value:0}%";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Hub.MetricsReceived += OnMetrics;
+        Hub.DropletsRefreshed += OnDropletsRefreshed;
+        try
+        {
+            var status = await Api.GetConnectionStatusAsync();
+            _connected = status.Connected;
+            if (_connected)
+            {
+                await Hub.StartAsync();
+                await LoadAsync();
+            }
+            else _loading = false;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _loading = false;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+        try
+        {
+            var droplets = await Api.GetDropletsAsync();
+            _droplets.Clear();
+            _droplets.AddRange(droplets.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase));
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex is OrbitApiException ? ex.Message : $"Failed to load droplets: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        await LoadAsync();
+        if (_selected is not null)
+            _selected = _droplets.FirstOrDefault(d => d.Id == _selected.Id);
+        StateHasChanged();
+    }
+
+    private void Select(DropletDto d)
+    {
+        _selected = d;
+        _panelOpen = true;
+    }
+
+    private void ClosePanel() => _panelOpen = false;
+
+    private void OnMetrics(DropletMetricsDto m) => _ = InvokeAsync(() =>
+    {
+        var i = _droplets.FindIndex(d => d.Id == m.DropletId);
+        if (i < 0) return;
+        _droplets[i] = _droplets[i] with
+        {
+            CpuPercent = m.CpuPercent,
+            MemoryPercent = m.MemoryPercent,
+            DiskPercent = m.DiskPercent,
+            MetricsAt = m.TimestampUtc,
+            Health = m.Health,
+        };
+        if (_selected?.Id == m.DropletId) _selected = _droplets[i];
+        StateHasChanged();
+    });
+
+    private void OnDropletsRefreshed() => _ = InvokeAsync(ReloadAsync);
+
+    public ValueTask DisposeAsync()
+    {
+        Hub.MetricsReceived -= OnMetrics;
+        Hub.DropletsRefreshed -= OnDropletsRefreshed;
+        return ValueTask.CompletedTask;
+    }
+}

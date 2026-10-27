@@ -1,0 +1,23 @@
+@inject NavigationManager Nav
+
+<div class="segmented" role="tablist">
+    <button class="@(IsGlobe ? "active" : "")" @onclick="GoGlobe" role="tab" aria-selected="@IsGlobe">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
+        </svg>
+        Globe
+    </button>
+    <button class="@(IsGlobe ? "" : "active")" @onclick="GoList" role="tab" aria-selected="@(!IsGlobe)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+        </svg>
+        List
+    </button>
+</div>
+
+@code {
+    [Parameter] public bool IsGlobe { get; set; }
+
+    private void GoGlobe() => Nav.NavigateTo("");
+    private void GoList() => Nav.NavigateTo("droplets");
+}

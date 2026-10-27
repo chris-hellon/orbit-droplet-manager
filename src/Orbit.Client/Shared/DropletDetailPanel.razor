@@ -1,0 +1,195 @@
+@inject OrbitApiClient Api
+@inject NavigationManager Nav
+
+<div class="detail-panel @(Open ? "open" : "")">
+    @if (Droplet is { } d)
+    {
+        <div class="detail-head">
+            <div>
+                <div class="detail-title">@d.Name</div>
+                <div class="detail-sub">@d.RegionName · @d.SizeSlug</div>
+                <div style="margin-top:.5rem;"><HealthBadge Health="d.Health" /></div>
+            </div>
+            <button class="btn btn-ghost btn-sm" @onclick="OnClose" aria-label="Close">✕</button>
+        </div>
+
+        <div class="detail-body">
+            @if (_error is not null)
+            {
+                <div class="alert alert-error">@_error</div>
+            }
+
+            <button class="btn btn-primary" @onclick='() => Nav.NavigateTo($"droplets/{d.Id}")'>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+                Manage inside
+            </button>
+
+            <div>
+                <Meter Label="CPU" Value="d.CpuPercent" />
+                <div style="height:.7rem;"></div>
+                <Meter Label="Memory" Value="d.MemoryPercent" />
+                <div style="height:.7rem;"></div>
+                <Meter Label="Disk" Value="d.DiskPercent" />
+                @if (d.MetricsAt is null && d.IsPoweredOn)
+                {
+                    <p class="faint" style="font-size:.76rem; margin-top:.6rem;">
+                        No monitoring data yet. Install the DigitalOcean metrics agent on this droplet for live CPU / RAM / disk.
+                    </p>
+                }
+            </div>
+
+            <dl class="kv">
+                <dt>Status</dt><dd>@d.Status</dd>
+                <dt>Public IPv4</dt><dd class="mono">@(d.PublicIpv4 ?? "—")</dd>
+                <dt>Private IPv4</dt><dd class="mono">@(d.PrivateIpv4 ?? "—")</dd>
+                <dt>IPv6</dt><dd class="mono">@(d.PublicIpv6 ?? "—")</dd>
+                <dt>Image</dt><dd>@($"{d.ImageDistribution} {d.ImageName}".Trim())</dd>
+                <dt>Specs</dt><dd>@d.Vcpus vCPU · @($"{d.MemoryMb / 1024.0:0.#}") GB · @d.DiskGb GB SSD</dd>
+                <dt>Price</dt><dd>$@d.PriceMonthly.ToString("0.00")/mo</dd>
+                <dt>Created</dt><dd>@d.CreatedAt.ToString("yyyy-MM-dd")</dd>
+                <dt>ID</dt><dd class="mono">@d.Id</dd>
+            </dl>
+
+            @if (d.Tags.Count > 0)
+            {
+                <div>
+                    <div class="faint" style="font-size:.76rem; margin-bottom:.35rem;">Tags</div>
+                    <div class="chips">
+                        @foreach (var t in d.Tags)
+                        {
+                            <span class="tag">@t</span>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div>
+                <div class="faint" style="font-size:.76rem; margin-bottom:.5rem;">Power</div>
+                <div class="action-row">
+                    @if (d.IsPoweredOn)
+                    {
+                        <button class="btn btn-danger btn-sm" @onclick="() => RequestPower(PowerAction.PowerOff)" disabled="@_busy">Power off</button>
+                        <button class="btn btn-sm" @onclick="() => RequestPower(PowerAction.Reboot)" disabled="@_busy">Reboot</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary btn-sm" @onclick="() => DoPower(PowerAction.PowerOn)" disabled="@_busy">Power on</button>
+                    }
+                </div>
+            </div>
+
+            <div>
+                <div class="faint" style="font-size:.76rem; margin-bottom:.5rem;">Snapshot</div>
+                @if (_snapshotMode)
+                {
+                    <div class="form-field">
+                        <input class="input mono" placeholder="snapshot name" @bind="_snapshotName" @bind:event="oninput" />
+                    </div>
+                    <div class="action-row">
+                        <button class="btn btn-primary btn-sm" @onclick="DoSnapshot" disabled="@(_busy || string.IsNullOrWhiteSpace(_snapshotName))">Create snapshot</button>
+                        <button class="btn btn-ghost btn-sm" @onclick="() => _snapshotMode = false" disabled="@_busy">Cancel</button>
+                    </div>
+                }
+                else
+                {
+                    <button class="btn btn-sm" @onclick="StartSnapshot" disabled="@_busy">Take snapshot…</button>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<ConfirmDialog Visible="_confirm is not null"
+               Danger="true"
+               Busy="_busy"
+               Title="@_confirmTitle"
+               Message="@_confirmMsg"
+               ConfirmText="@_confirmText"
+               OnConfirm="ConfirmPower"
+               OnCancel="() => _confirm = null" />
+
+@code {
+    [Parameter] public DropletDto? Droplet { get; set; }
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool _busy;
+    private string? _error;
+
+    private PowerAction? _confirm;
+    private string _confirmTitle = "", _confirmMsg = "", _confirmText = "";
+
+    private bool _snapshotMode;
+    private string _snapshotName = "";
+
+    private void RequestPower(PowerAction action)
+    {
+        _error = null;
+        _confirm = action;
+        (_confirmTitle, _confirmMsg, _confirmText) = action switch
+        {
+            PowerAction.PowerOff => ("Power off droplet?",
+                $"“{Droplet!.Name}” will be powered off. You can power it back on at any time.", "Power off"),
+            PowerAction.Reboot => ("Reboot droplet?",
+                $"“{Droplet!.Name}” will reboot now. Running services will be interrupted.", "Reboot"),
+            _ => ("Confirm", "Are you sure?", "Confirm"),
+        };
+    }
+
+    private async Task ConfirmPower()
+    {
+        if (_confirm is null) return;
+        var action = _confirm.Value;
+        await DoPower(action);
+        _confirm = null;
+    }
+
+    private async Task DoPower(PowerAction action)
+    {
+        if (Droplet is null) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            await Api.PowerAsync(Droplet.Id, action);
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex is OrbitApiException ? ex.Message : $"Action failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void StartSnapshot()
+    {
+        _error = null;
+        _snapshotMode = true;
+        _snapshotName = $"{Droplet?.Name}-{DateTime.Now:yyyyMMdd-HHmm}";
+    }
+
+    private async Task DoSnapshot()
+    {
+        if (Droplet is null || string.IsNullOrWhiteSpace(_snapshotName)) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            await Api.SnapshotAsync(Droplet.Id, _snapshotName.Trim());
+            _snapshotMode = false;
+            await OnChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex is OrbitApiException ? ex.Message : $"Snapshot failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

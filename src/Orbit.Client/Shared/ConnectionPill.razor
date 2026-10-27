@@ -1,0 +1,66 @@
+@rendermode RenderModes.Wasm
+@implements IAsyncDisposable
+@inject OrbitApiClient Api
+@inject MetricsHubClient Hub
+@using Microsoft.AspNetCore.SignalR.Client
+
+<div class="conn-pill">
+    <span class="dot @StateClass"></span>
+    <div style="min-width:0; overflow:hidden;">
+        @if (_status is { Connected: true })
+        {
+            <div style="color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                @(_status.AccountEmail ?? _status.Label ?? "Connected")
+            </div>
+            <div class="faint" style="font-size:.72rem;">@StateText</div>
+        }
+        else
+        {
+            <a href="settings">Connect a token</a>
+        }
+    </div>
+</div>
+
+@code {
+    private ConnectionStatusDto? _status;
+    private HubConnectionState _hubState = HubConnectionState.Disconnected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Hub.ConnectionStateChanged += OnHubState;
+        try
+        {
+            _status = await Api.GetConnectionStatusAsync();
+            if (_status.Connected)
+                await Hub.StartAsync();
+        }
+        catch
+        {
+            _status = ConnectionStatusDto.Disconnected;
+        }
+    }
+
+    private void OnHubState(HubConnectionState state) =>
+        _ = InvokeAsync(() => { _hubState = state; StateHasChanged(); });
+
+    private string StateClass => _hubState switch
+    {
+        HubConnectionState.Connected => "live",
+        HubConnectionState.Reconnecting or HubConnectionState.Connecting => "reconnecting",
+        _ => "offline",
+    };
+
+    private string StateText => _hubState switch
+    {
+        HubConnectionState.Connected => "live",
+        HubConnectionState.Reconnecting => "reconnecting…",
+        HubConnectionState.Connecting => "connecting…",
+        _ => "offline",
+    };
+
+    public ValueTask DisposeAsync()
+    {
+        Hub.ConnectionStateChanged -= OnHubState;
+        return ValueTask.CompletedTask;
+    }
+}

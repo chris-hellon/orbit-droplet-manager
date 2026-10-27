@@ -1,0 +1,24 @@
+## .NET
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+
+## Orbit runtime data (SQLite db + Data-Protection keys)
+.data/
+*.db
+*.db-shm
+*.db-wal
+
+## EF design-time scratch db
+orbit-design.db*
+
+## macOS
+.DS_Store
+
+## Rider / VS Code
+.idea/
+.vscode/

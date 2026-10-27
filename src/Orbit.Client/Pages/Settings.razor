@@ -1,0 +1,269 @@
+@page "/settings"
+@rendermode RenderModes.Wasm
+@using Orbit.Client.Shared
+@inject OrbitApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Orbit · Settings</PageTitle>
+
+<div class="content">
+    <div class="topbar">
+        <div>
+            <h1>Settings</h1>
+            <div class="sub">Provider connection</div>
+        </div>
+    </div>
+
+    <div class="page-pad">
+        <div class="card" style="padding:1.5rem; margin-bottom:1.25rem;">
+            <div class="spread" style="margin-bottom:1rem;">
+                <h3 style="margin:0;">DigitalOcean</h3>
+                @if (_status is { Connected: true })
+                {
+                    <span class="health-badge health-healthy"><span class="dot bg-healthy"></span> Connected</span>
+                }
+                else
+                {
+                    <span class="health-badge health-unknown"><span class="dot bg-unknown"></span> Not connected</span>
+                }
+            </div>
+
+            @if (_status is { Connected: true })
+            {
+                <dl class="kv" style="margin-bottom:1.25rem;">
+                    <dt>Account</dt><dd>@_status.AccountEmail</dd>
+                    <dt>Token</dt><dd class="mono">@_status.TokenHint</dd>
+                    <dt>Droplet limit</dt><dd>@_status.DropletLimit</dd>
+                    <dt>Validated</dt><dd>@(_status.LastValidatedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</dd>
+                </dl>
+            }
+
+            @if (_error is not null)
+            {
+                <div class="alert alert-error" style="margin-bottom:1rem;">@_error</div>
+            }
+            @if (_success is not null)
+            {
+                <div class="alert alert-success" style="margin-bottom:1rem;">@_success</div>
+            }
+
+            <div class="form-field">
+                <label for="token">Personal access token</label>
+                <input id="token" class="input mono" type="password" autocomplete="off" spellcheck="false"
+                       placeholder="dop_v1_…" @bind="_request.Token" @bind:event="oninput" />
+                <span class="hint">
+                    Needs read &amp; write scope. Create one at
+                    <a href="https://cloud.digitalocean.com/account/api/tokens" target="_blank" rel="noopener">cloud.digitalocean.com</a>.
+                    It's encrypted at rest before it's stored.
+                </span>
+            </div>
+
+            <div class="form-field">
+                <label for="label">Label <span class="faint">(optional)</span></label>
+                <input id="label" class="input" placeholder="e.g. Personal account" @bind="_request.Label" @bind:event="oninput" />
+            </div>
+
+            <div class="action-row" style="margin-top:.5rem;">
+                <button class="btn" @onclick="TestAsync" disabled="@(_busy || !HasToken)">
+                    @if (_busy && _mode == "test") { <span class="spinner"></span> }
+                    Test token
+                </button>
+                <button class="btn btn-primary" @onclick="SaveAsync" disabled="@(_busy || !HasToken)">
+                    @if (_busy && _mode == "save") { <span class="spinner"></span> }
+                    @(_status is { Connected: true } ? "Replace token" : "Save & connect")
+                </button>
+                @if (_status is { Connected: true })
+                {
+                    <button class="btn btn-danger" @onclick="() => _confirmDisconnect = true" disabled="@_busy">Disconnect</button>
+                }
+            </div>
+        </div>
+
+        <p class="faint" style="font-size:.8rem;">
+            The token is encrypted with ASP.NET Core Data Protection and never leaves this server except in calls to the DigitalOcean API.
+        </p>
+
+        <div class="card" style="padding:1.5rem; margin-top:1.25rem;">
+            <div class="spread" style="margin-bottom:.5rem;">
+                <h3 style="margin:0;">SSH access</h3>
+                @if (_ssh?.Configured == true)
+                {
+                    <span class="health-badge health-healthy"><span class="dot bg-healthy"></span> Configured</span>
+                }
+                else
+                {
+                    <span class="health-badge health-unknown"><span class="dot bg-unknown"></span> Not configured</span>
+                }
+            </div>
+            <p class="faint" style="font-size:.82rem; margin-top:0;">
+                Used to look inside your droplets — manage services, tail logs and open a shell. The private key is encrypted at rest and reused across your droplets.
+            </p>
+
+            @if (_ssh?.Configured == true)
+            {
+                <dl class="kv" style="margin-bottom:1rem;">
+                    <dt>User</dt><dd class="mono">@_ssh.Username</dd>
+                    <dt>Port</dt><dd class="mono">@_ssh.Port</dd>
+                    <dt>Last used</dt><dd>@(_ssh.LastUsedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "never")</dd>
+                </dl>
+            }
+
+            @if (_sshError is not null) { <div class="alert alert-error" style="margin-bottom:1rem;">@_sshError</div> }
+            @if (_sshSuccess is not null) { <div class="alert alert-success" style="margin-bottom:1rem;">@_sshSuccess</div> }
+
+            <div class="form-field">
+                <label for="sshkey">Private key</label>
+                <textarea id="sshkey" class="input mono" rows="6" spellcheck="false" autocomplete="off"
+                          placeholder="Paste a private key — -----BEGIN OPENSSH PRIVATE KEY----- … -----END OPENSSH PRIVATE KEY-----"
+                          @bind="_sshReq.PrivateKey" @bind:event="oninput"></textarea>
+                <span class="hint">An OpenSSH/PEM private key whose public half is in the droplet's <code>~/.ssh/authorized_keys</code>.</span>
+            </div>
+            <div class="row" style="gap:1rem;">
+                <div class="form-field" style="flex:1;">
+                    <label for="sshuser">User</label>
+                    <input id="sshuser" class="input mono" @bind="_sshReq.Username" placeholder="root" />
+                </div>
+                <div class="form-field" style="width:120px;">
+                    <label for="sshport">Port</label>
+                    <input id="sshport" class="input mono" type="number" @bind="_sshReq.Port" />
+                </div>
+            </div>
+            <div class="action-row" style="margin-top:.25rem;">
+                <button class="btn btn-primary" @onclick="SaveSshAsync" disabled="@(_sshBusy || string.IsNullOrWhiteSpace(_sshReq.PrivateKey))">
+                    @if (_sshBusy) { <span class="spinner"></span> }
+                    @(_ssh?.Configured == true ? "Replace key" : "Save SSH key")
+                </button>
+                @if (_ssh?.Configured == true)
+                {
+                    <button class="btn btn-danger" @onclick="() => _confirmDeleteSsh = true" disabled="@_sshBusy">Remove key</button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<ConfirmDialog Visible="_confirmDisconnect"
+               Danger="true"
+               Busy="_busy"
+               Title="Disconnect DigitalOcean?"
+               Message="Orbit will delete the stored token. Your droplets are not affected."
+               ConfirmText="Disconnect"
+               OnConfirm="DisconnectAsync"
+               OnCancel="() => _confirmDisconnect = false" />
+
+<ConfirmDialog Visible="_confirmDeleteSsh"
+               Danger="true"
+               Busy="_sshBusy"
+               Title="Remove SSH key?"
+               Message="Orbit will delete the stored SSH key. You won't be able to manage droplets until you add one again."
+               ConfirmText="Remove key"
+               OnConfirm="DeleteSshAsync"
+               OnCancel="() => _confirmDeleteSsh = false" />
+
+@code {
+    private readonly ConnectRequest _request = new();
+    private ConnectionStatusDto? _status;
+
+    private bool _busy;
+    private string _mode = "";
+    private string? _error;
+    private string? _success;
+    private bool _confirmDisconnect;
+
+    private SshCredentialStatusDto? _ssh;
+    private readonly SaveSshKeyRequest _sshReq = new();
+    private bool _sshBusy;
+    private string? _sshError;
+    private string? _sshSuccess;
+    private bool _confirmDeleteSsh;
+
+    private bool HasToken => !string.IsNullOrWhiteSpace(_request.Token);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _status = await Api.GetConnectionStatusAsync();
+            _ssh = await Api.GetSshStatusAsync();
+            if (_ssh.Configured) { _sshReq.Username = _ssh.Username; _sshReq.Port = _ssh.Port; }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task SaveSshAsync()
+    {
+        _sshBusy = true; _sshError = null; _sshSuccess = null;
+        try
+        {
+            _ssh = await Api.SaveSshKeyAsync(_sshReq);
+            _sshReq.PrivateKey = "";
+            _sshSuccess = "SSH key saved. You can now manage your droplets.";
+        }
+        catch (Exception ex) { _sshError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _sshBusy = false; }
+    }
+
+    private async Task DeleteSshAsync()
+    {
+        _sshBusy = true; _sshError = null; _sshSuccess = null;
+        try
+        {
+            await Api.DeleteSshAsync();
+            _ssh = SshCredentialStatusDto.NotConfigured;
+            _confirmDeleteSsh = false;
+        }
+        catch (Exception ex) { _sshError = ex.Message; }
+        finally { _sshBusy = false; }
+    }
+
+    private async Task TestAsync()
+    {
+        _busy = true; _mode = "test"; _error = null; _success = null;
+        try
+        {
+            var account = await Api.ValidateAsync(_request);
+            _success = $"Token is valid — signed in as {account.Email} (droplet limit {account.DropletLimit}).";
+        }
+        catch (Exception ex)
+        {
+            _error = ex is OrbitApiException ? ex.Message : ex.Message;
+        }
+        finally { _busy = false; _mode = ""; }
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true; _mode = "save"; _error = null; _success = null;
+        try
+        {
+            _status = await Api.ConnectAsync(_request);
+            _success = "Connected. Taking you to the globe…";
+            StateHasChanged();
+            await Task.Delay(700);
+            Nav.NavigateTo("");
+        }
+        catch (Exception ex)
+        {
+            _error = ex is OrbitApiException ? ex.Message : ex.Message;
+        }
+        finally { _busy = false; _mode = ""; }
+    }
+
+    private async Task DisconnectAsync()
+    {
+        _busy = true; _error = null; _success = null;
+        try
+        {
+            await Api.DisconnectAsync();
+            _status = ConnectionStatusDto.Disconnected;
+            _request.Token = "";
+            _confirmDisconnect = false;
+            _success = "Disconnected.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+}

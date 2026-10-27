@@ -1,0 +1,1132 @@
+@page "/droplets/{Id:long}"
+@rendermode RenderModes.Wasm
+@using Orbit.Client.Shared
+@inject OrbitApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Orbit · @(_droplet?.Name ?? "Droplet")</PageTitle>
+
+<div class="content">
+    <div class="topbar">
+        <div class="row">
+            <button class="btn btn-ghost btn-sm" @onclick='() => Nav.NavigateTo("droplets")'>← Back</button>
+            <div>
+                <h1 style="margin:0;">@(_droplet?.Name ?? "Droplet")</h1>
+                <div class="sub">
+                    @if (_droplet is { } d)
+                    {
+                        @($"{d.RegionName} · {d.PublicIpv4 ?? "no public IP"} · {d.Status}")
+                    }
+                </div>
+            </div>
+        </div>
+        @if (_droplet is not null)
+        {
+            <HealthBadge Health="_droplet.Health" />
+        }
+    </div>
+
+    <div class="tabbar">
+        @foreach (var t in Tabs)
+        {
+            <button class="tab @(_tab == t ? "active" : "")" @onclick="() => SetTab(t)">@t</button>
+        }
+    </div>
+
+    <div class="manage-body">
+        @if (_droplet is null && _loading)
+        {
+            <div class="loading-center"><span class="spinner"></span></div>
+        }
+        else if (_droplet is null)
+        {
+            <div class="empty-state"><div class="inner"><h2>Droplet not found</h2><a class="btn btn-primary" href="droplets">Back to list</a></div></div>
+        }
+        else
+        {
+            @if (RequiresSsh(_tab) && !_sshConfigured)
+            {
+                <div class="page-pad">
+                    <div class="alert alert-info">
+                        To manage services, logs and the shell on this droplet, add an SSH key.
+                        <a href="settings">Add an SSH key in Settings →</a>
+                    </div>
+                </div>
+            }
+            else
+            {
+                @switch (_tab)
+                {
+                    case "Overview":
+                        <div class="page-pad" style="max-width:560px;">
+                            <Meter Label="CPU" Value="_droplet.CpuPercent" />
+                            <div style="height:.7rem;"></div>
+                            <Meter Label="Memory" Value="_droplet.MemoryPercent" />
+                            <div style="height:.7rem;"></div>
+                            <Meter Label="Disk" Value="_droplet.DiskPercent" />
+                            <dl class="kv" style="margin-top:1.25rem;">
+                                <dt>Public IPv4</dt><dd class="mono">@(_droplet.PublicIpv4 ?? "—")</dd>
+                                <dt>Private IPv4</dt><dd class="mono">@(_droplet.PrivateIpv4 ?? "—")</dd>
+                                <dt>Image</dt><dd>@($"{_droplet.ImageDistribution} {_droplet.ImageName}".Trim())</dd>
+                                <dt>Specs</dt><dd>@_droplet.Vcpus vCPU · @($"{_droplet.MemoryMb / 1024.0:0.#}") GB · @_droplet.DiskGb GB</dd>
+                                <dt>Size</dt><dd class="mono">@_droplet.SizeSlug</dd>
+                            </dl>
+
+                            @if (_planMessage is not null) { <div class="alert alert-success" style="margin-top:1.25rem;">@_planMessage</div> }
+                            @if (_planError is not null) { <div class="alert alert-error" style="margin-top:1.25rem;">@_planError</div> }
+
+                            <div class="card" style="padding:1.1rem; margin-top:1.5rem;">
+                                <h3 style="margin:0 0 .25rem; font-size:1rem;">Resize</h3>
+                                <p class="faint" style="font-size:.8rem; margin:0 0 .75rem;">Change the plan (CPU / RAM). The droplet must be powered off.</p>
+                                @if (_sizes is null)
+                                {
+                                    <span class="spinner"></span>
+                                }
+                                else
+                                {
+                                    <div class="form-field">
+                                        <select class="input" @bind="_resizeSize">
+                                            <option value="">Choose a new size…</option>
+                                            @foreach (var s in AvailableSizes)
+                                            {
+                                                <option value="@s.Slug">@s.Label</option>
+                                            }
+                                        </select>
+                                    </div>
+                                    <label class="row" style="gap:.5rem; font-size:.82rem; cursor:pointer; margin-bottom:.75rem;">
+                                        <input type="checkbox" @bind="_resizeDisk" /> Also grow the disk (permanent — can't be downsized later)
+                                    </label>
+                                    <button class="btn btn-primary btn-sm" @onclick="() => _confirmResize = true"
+                                            disabled="@(_planBusy || string.IsNullOrEmpty(_resizeSize) || _droplet.IsPoweredOn)">
+                                        Resize
+                                    </button>
+                                    @if (_droplet.IsPoweredOn)
+                                    {
+                                        <span class="faint" style="font-size:.8rem; margin-left:.6rem;">Power it off first (Services → or the globe panel).</span>
+                                    }
+                                }
+                            </div>
+
+                            <div class="card" style="padding:1.1rem; margin-top:1.25rem; border-color:#5c2630;">
+                                <h3 style="margin:0 0 .25rem; font-size:1rem;">Rebuild</h3>
+                                <p class="faint" style="font-size:.8rem; margin:0 0 .75rem;">Reinstall the droplet from an image or snapshot. <b style="color:var(--health-critical);">Erases everything</b> on it.</p>
+                                @if (_images is null)
+                                {
+                                    <span class="spinner"></span>
+                                }
+                                else
+                                {
+                                    <div class="form-field">
+                                        <select class="input" @bind="_rebuildImage">
+                                            <option value="">Choose an image…</option>
+                                            <optgroup label="Snapshots">
+                                                @foreach (var i in _images.Where(x => x.IsSnapshot).OrderByDescending(x => x.CreatedAt))
+                                                {
+                                                    <option value="@i.Reference">@i.Name</option>
+                                                }
+                                            </optgroup>
+                                            <optgroup label="Distributions">
+                                                @foreach (var i in _images.Where(x => !x.IsSnapshot).OrderBy(x => x.Distribution).ThenBy(x => x.Name))
+                                                {
+                                                    <option value="@i.Reference">@i.Distribution @i.Name</option>
+                                                }
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                    <button class="btn btn-danger btn-sm" @onclick="() => _confirmRebuild = true" disabled="@(_planBusy || string.IsNullOrEmpty(_rebuildImage))">Rebuild</button>
+                                }
+                            </div>
+                        </div>
+                        break;
+
+                    case "Websites":
+                        <div class="list-wrap">
+                            <div class="row spread" style="margin-bottom:1rem;">
+                                <button class="btn btn-primary btn-sm" @onclick="() => _addSite = true">+ Add website</button>
+                                <div class="row">
+                                    <button class="btn btn-ghost btn-sm" @onclick="ReloadNginxAsync" disabled="@_sitesLoading">Reload nginx</button>
+                                    <button class="btn btn-ghost btn-sm" @onclick="LoadSitesAsync" disabled="@_sitesLoading">Refresh</button>
+                                    @if (_sitesLoading) { <span class="spinner"></span> }
+                                </div>
+                            </div>
+                            @if (_actionResult is not null) { <div class="alert @(_actionResult.Ok ? "alert-success" : "alert-error")" style="margin-bottom:1rem; white-space:pre-wrap;">@_actionResult.Output</div> }
+                            @if (_opError is not null) { <div class="alert alert-error" style="margin-bottom:1rem;">@_opError</div> }
+                            @if (!_sitesLoading && _sites.Count == 0)
+                            {
+                                <div class="empty-state" style="position:static;"><div class="inner"><h2>No websites found</h2><p>Orbit looks for nginx sites (<code>nginx -T</code>). None were detected on this droplet.</p></div></div>
+                            }
+                            else
+                            {
+                                <div class="db-grid">
+                                    @foreach (var ws in _sites)
+                                    {
+                                        <button class="card db-card" @onclick="() => OpenSite(ws)">
+                                            <div class="spread">
+                                                <b style="overflow:hidden; text-overflow:ellipsis;">@ws.PrimaryDomain</b>
+                                                @if (ws.Ssl)
+                                                {
+                                                    <span class="health-badge @SslClass(ws)"><span class="dot @SslDot(ws)"></span>@SslLabel(ws)</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="health-badge health-unknown"><span class="dot bg-unknown"></span>No SSL</span>
+                                                }
+                                            </div>
+                                            <div class="faint mono" style="font-size:.76rem; margin:.5rem 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                                @(ws.ProxyPass is { Length: > 0 } ? $"→ {ws.ProxyPass}" : (ws.Root is { Length: > 0 } ? ws.Root : "static"))
+                                            </div>
+                                            @if (ws.Domains.Count > 1)
+                                            {
+                                                <div class="faint" style="font-size:.74rem;">+@(ws.Domains.Count - 1) more domain@(ws.Domains.Count - 1 == 1 ? "" : "s")</div>
+                                            }
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        break;
+
+                    case "Firewall":
+                        <div class="list-wrap">
+                            @if (_fwLoading)
+                            {
+                                <div class="loading-center" style="position:static; padding:2rem;"><span class="spinner"></span></div>
+                            }
+                            else if (_firewall is null || !_firewall.Installed)
+                            {
+                                <div class="alert alert-info">The <code>ufw</code> firewall isn't installed on this droplet. Install it (<code>apt install ufw</code>) to manage it here.</div>
+                            }
+                            else
+                            {
+                                <div class="row spread" style="margin-bottom:1rem;">
+                                    <span class="health-badge @(_firewall.Active ? "health-healthy" : "health-unknown")">
+                                        <span class="dot @(_firewall.Active ? "bg-healthy" : "bg-unknown")"></span>Firewall @(_firewall.Active ? "active" : "inactive")
+                                    </span>
+                                    <div class="row">
+                                        @if (_firewall.Active)
+                                        {
+                                            <button class="btn btn-danger btn-sm" @onclick="() => ToggleFirewallAsync(false)" disabled="@_fwBusy">Disable</button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn btn-primary btn-sm" @onclick="() => ToggleFirewallAsync(true)" disabled="@_fwBusy">Enable</button>
+                                        }
+                                        <button class="btn btn-ghost btn-sm" @onclick="LoadFirewallAsync" disabled="@_fwBusy">Refresh</button>
+                                        @if (_fwBusy) { <span class="spinner"></span> }
+                                    </div>
+                                </div>
+
+                                @if (!_firewall.Active)
+                                {
+                                    <div class="alert alert-info" style="margin-bottom:1rem;">Enabling will auto-allow SSH (port 22 / OpenSSH) so you aren't locked out. If you use a non-standard SSH port, add an allow rule for it first.</div>
+                                }
+                                @if (_fwError is not null) { <div class="alert alert-error" style="margin-bottom:1rem;">@_fwError</div> }
+
+                                <div class="card" style="padding:1rem; margin-bottom:1rem;">
+                                    <div class="row" style="flex-wrap:wrap;">
+                                        <select class="input" style="max-width:110px;" @bind="_newRule.Action">
+                                            <option value="allow">Allow</option>
+                                            <option value="deny">Deny</option>
+                                        </select>
+                                        <input class="input mono" style="max-width:200px;" placeholder="port or service (8080, OpenSSH)" @bind="_newRule.Port" @bind:event="oninput" />
+                                        <select class="input" style="max-width:100px;" @bind="_newRule.Proto">
+                                            <option value="tcp">tcp</option>
+                                            <option value="udp">udp</option>
+                                            <option value="any">any</option>
+                                        </select>
+                                        <button class="btn btn-primary btn-sm" @onclick="AddFirewallRuleAsync" disabled="@(_fwBusy || string.IsNullOrWhiteSpace(_newRule.Port))">Add rule</button>
+                                    </div>
+                                </div>
+
+                                <table class="droplets">
+                                    <thead><tr><th style="width:1%;">#</th><th>Rule</th><th style="width:1%;"></th></tr></thead>
+                                    <tbody>
+                                        @foreach (var r in _firewall.Rules)
+                                        {
+                                            <tr>
+                                                <td class="faint mono">@r.Number</td>
+                                                <td class="mono" style="font-size:.84rem;">@r.Raw</td>
+                                                <td><button class="btn btn-ghost btn-sm" @onclick="() => DeleteFirewallRuleAsync(r.Number)" disabled="@_fwBusy">✕</button></td>
+                                            </tr>
+                                        }
+                                        @if (_firewall.Rules.Count == 0)
+                                        {
+                                            <tr><td colspan="3" class="faint" style="padding:1rem;">No rules yet.</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                        </div>
+                        break;
+
+                    case "Database":
+                        <div class="list-wrap">
+                            @if (_dbLoading)
+                            {
+                                <div class="loading-center" style="position:static; padding:2rem;"><span class="spinner"></span></div>
+                            }
+                            else if (_db is null || !_db.Installed)
+                            {
+                                <div class="alert alert-info">No database engine detected. Orbit looks for MySQL/MariaDB (<code>mysql</code>) or PostgreSQL (<code>psql</code>) on this droplet.</div>
+                            }
+                            else
+                            {
+                                <div class="row spread" style="margin-bottom:1rem;">
+                                    <span class="health-badge @(_db.Running ? "health-healthy" : "health-warning")">
+                                        <span class="dot @(_db.Running ? "bg-healthy" : "bg-warning")"></span>@_db.EngineLabel · @(_db.Running ? "running" : "stopped")
+                                    </span>
+                                    <button class="btn btn-ghost btn-sm" @onclick="LoadDbAsync" disabled="@_dbBusy">Refresh</button>
+                                </div>
+                                <p class="faint mono" style="font-size:.76rem; margin-top:-.5rem;">@_db.Version</p>
+
+                                @if (_dbError is not null) { <div class="alert alert-error" style="margin-bottom:1rem;">@_dbError</div> }
+                                @if (_newUserPassword is not null)
+                                {
+                                    <div class="alert alert-success" style="margin-bottom:1rem;">
+                                        User created. Password (shown once — copy it now): <b class="mono">@_newUserPassword</b>
+                                    </div>
+                                }
+
+                                <div class="db-two-col">
+                                    <div class="card" style="padding:1rem;">
+                                        <h3 style="margin:0 0 .75rem; font-size:1rem;">Databases</h3>
+                                        <div class="row" style="margin-bottom:.75rem;">
+                                            <input class="input mono" placeholder="new_database" @bind="_newDbName" @bind:event="oninput" />
+                                            <button class="btn btn-primary btn-sm" @onclick="CreateDbAsync" disabled="@(_dbBusy || string.IsNullOrWhiteSpace(_newDbName))">Create</button>
+                                        </div>
+                                        @foreach (var dbName in _db.Databases)
+                                        {
+                                            <div class="spread res-row">
+                                                <span class="mono">@dbName</span>
+                                                <button class="btn btn-ghost btn-sm" @onclick="() => _confirmDropDb = dbName" disabled="@_dbBusy">✕</button>
+                                            </div>
+                                        }
+                                        @if (_db.Databases.Count == 0) { <p class="faint" style="font-size:.8rem;">No user databases.</p> }
+                                    </div>
+
+                                    <div class="card" style="padding:1rem;">
+                                        <h3 style="margin:0 0 .75rem; font-size:1rem;">Users</h3>
+                                        <div class="row" style="margin-bottom:.75rem;">
+                                            <input class="input mono" placeholder="new_user" @bind="_newUserName" @bind:event="oninput" />
+                                            <button class="btn btn-primary btn-sm" @onclick="CreateDbUserAsync" disabled="@(_dbBusy || string.IsNullOrWhiteSpace(_newUserName))">Create</button>
+                                        </div>
+                                        @foreach (var u in _db.Users)
+                                        {
+                                            <div class="spread res-row">
+                                                <span class="mono">@u</span>
+                                                @if (!IsSystemDbUser(u))
+                                                {
+                                                    <button class="btn btn-ghost btn-sm" @onclick="() => _confirmDropUser = u" disabled="@_dbBusy">✕</button>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                        break;
+
+                    case "Services":
+                        <div class="list-wrap">
+                            <div class="row" style="margin-bottom:1rem; flex-wrap:wrap;">
+                                <div class="segmented">
+                                    <button class="@(_serviceScope == "app" ? "active" : "")" @onclick='() => _serviceScope = "app"'>My services</button>
+                                    <button class="@(_serviceScope == "all" ? "active" : "")" @onclick='() => _serviceScope = "all"'>All</button>
+                                </div>
+                                <input class="input" style="max-width:240px;" placeholder="Filter…" @bind="_serviceFilter" @bind:event="oninput" />
+                                <button class="btn btn-ghost btn-sm" @onclick="LoadServicesAsync" disabled="@_servicesLoading">Refresh</button>
+                                @if (_servicesLoading) { <span class="spinner"></span> }
+                            </div>
+                            @if (_opError is not null) { <div class="alert alert-error" style="margin-bottom:1rem;">@_opError</div> }
+                            <table class="droplets">
+                                <thead><tr><th>Service</th><th>State</th><th>Description</th><th style="width:1%;"></th></tr></thead>
+                                <tbody>
+                                    @foreach (var s in FilteredServices)
+                                    {
+                                        <tr @onclick="() => OpenService(s)" class="@(_selectedService?.Unit == s.Unit && _servicePanelOpen ? "row-selected" : "")">
+                                            <td class="mono">@s.Unit</td>
+                                            <td>
+                                                <span class="health-badge @StateClass(s)"><span class="dot @StateDot(s)"></span>@s.Active/@s.Sub</span>
+                                            </td>
+                                            <td class="faint" style="max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">@s.Description</td>
+                                            <td>
+                                                <div class="row" @onclick:stopPropagation="true">
+                                                    @if (s.IsRunning)
+                                                    {
+                                                        <button class="btn btn-sm" @onclick='() => ServiceActionAsync(s.Unit, "restart")' disabled="@_busy">Restart</button>
+                                                        <button class="btn btn-danger btn-sm" @onclick='() => ServiceActionAsync(s.Unit, "stop")' disabled="@_busy">Stop</button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button class="btn btn-primary btn-sm" @onclick='() => ServiceActionAsync(s.Unit, "start")' disabled="@_busy">Start</button>
+                                                    }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                    @if (!_servicesLoading && FilteredServices.Count == 0)
+                                    {
+                                        <tr><td colspan="4" class="faint" style="padding:1rem;">@(_serviceScope == "app" ? "No app services found. Switch to \"All\" to see every service." : "No services match.")</td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                            @if (_serviceScope == "app" && !_servicesLoading && _services.Count > 0)
+                            {
+                                <p class="faint" style="margin-top:.75rem; font-size:.8rem;">
+                                    Showing your app &amp; web services. <a href="javascript:void(0)" @onclick='() => _serviceScope = "all"'>Show all @_services.Count services →</a>
+                                </p>
+                            }
+                        </div>
+                        break;
+
+                    case "Logs":
+                        <div class="list-wrap">
+                            <div class="row" style="margin-bottom:1rem; flex-wrap:wrap;">
+                                <select class="input" style="max-width:220px;" @bind="_logSource">
+                                    <option value="nginx-access">Nginx access</option>
+                                    <option value="nginx-error">Nginx error</option>
+                                    <option value="syslog">System log</option>
+                                    <option value="journal">journalctl (service)</option>
+                                </select>
+                                @if (_logSource == "journal")
+                                {
+                                    <input class="input mono" style="max-width:220px;" placeholder="unit e.g. nginx.service" @bind="_logUnit" />
+                                }
+                                <select class="input" style="max-width:120px;" @bind="_logLines">
+                                    <option value="100">100 lines</option>
+                                    <option value="200">200 lines</option>
+                                    <option value="500">500 lines</option>
+                                </select>
+                                <button class="btn btn-primary btn-sm" @onclick="LoadLogAsync" disabled="@_logLoading">Load</button>
+                                @if (_logLoading) { <span class="spinner"></span> }
+                            </div>
+                            @if (_opError is not null) { <div class="alert alert-error" style="margin-bottom:1rem;">@_opError</div> }
+                            <pre class="logview">@(_log is { Length: > 0 } ? _log : "No output loaded yet.")</pre>
+                        </div>
+                        break;
+
+                    case "Terminal":
+                        <div class="term-pane">
+                            <SshTerminal DropletId="Id" @key="Id" />
+                        </div>
+                        break;
+                }
+            }
+        }
+
+        <div class="detail-panel @(_servicePanelOpen ? "open" : "")">
+            @if (_selectedService is { } svc)
+            {
+                <div class="detail-head">
+                    <div>
+                        <div class="detail-title mono" style="font-size:1rem;">@svc.Unit</div>
+                        <div class="detail-sub">@svc.Description</div>
+                        <div style="margin-top:.5rem;"><span class="health-badge @StateClass(svc)"><span class="dot @StateDot(svc)"></span>@svc.Active/@svc.Sub</span></div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" @onclick="() => _servicePanelOpen = false">✕</button>
+                </div>
+                <div class="detail-body">
+                    @if (_opError is not null) { <div class="alert alert-error">@_opError</div> }
+                    <div class="action-row">
+                        @if (svc.IsRunning)
+                        {
+                            <button class="btn btn-primary btn-sm" @onclick='() => ServiceActionAsync(svc.Unit, "restart")' disabled="@_busy">Restart</button>
+                            <button class="btn btn-danger btn-sm" @onclick='() => ServiceActionAsync(svc.Unit, "stop")' disabled="@_busy">Stop</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-primary btn-sm" @onclick='() => ServiceActionAsync(svc.Unit, "start")' disabled="@_busy">Start</button>
+                        }
+                        <button class="btn btn-ghost btn-sm" @onclick="() => LoadServiceLogAsync(svc.Unit)" disabled="@_serviceLogLoading">Refresh logs</button>
+                    </div>
+                    <div>
+                        <div class="faint" style="font-size:.76rem; margin-bottom:.4rem;">Recent logs (journalctl)</div>
+                        <pre class="logview" style="height:340px; flex:none;">@(_serviceLogLoading ? "Loading…" : (string.IsNullOrWhiteSpace(_serviceLog) ? "No recent log output." : _serviceLog))</pre>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="detail-panel @(_sitePanelOpen ? "open" : "")">
+            @if (_selectedSite is { } site)
+            {
+                <div class="detail-head">
+                    <div>
+                        <div class="detail-title">@site.PrimaryDomain</div>
+                        <div class="detail-sub">nginx site</div>
+                        <div style="margin-top:.5rem;">
+                            @if (site.Ssl)
+                            {
+                                <span class="health-badge @SslClass(site)"><span class="dot @SslDot(site)"></span>@SslLabel(site)</span>
+                            }
+                            else
+                            {
+                                <span class="health-badge health-unknown"><span class="dot bg-unknown"></span>No SSL</span>
+                            }
+                        </div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" @onclick="() => _sitePanelOpen = false">✕</button>
+                </div>
+                <div class="detail-body">
+                    <dl class="kv">
+                        <dt>Domains</dt><dd>@string.Join(", ", site.Domains)</dd>
+                        @if (site.ProxyPass is { Length: > 0 })
+                        {
+                            <dt>Proxies to</dt><dd class="mono">@site.ProxyPass</dd>
+                        }
+                        @if (site.Root is { Length: > 0 })
+                        {
+                            <dt>Root</dt><dd class="mono">@site.Root</dd>
+                        }
+                        <dt>Listen</dt><dd class="mono">@site.Listen</dd>
+                        @if (site.SslExpiresAt is { } exp)
+                        {
+                            <dt>SSL expires</dt><dd>@exp.ToLocalTime().ToString("yyyy-MM-dd") <span class="@SslClass(site)">(@site.SslDaysLeft days)</span></dd>
+                        }
+                        <dt>Config</dt><dd class="mono" style="font-size:.74rem;">@site.ConfigPath</dd>
+                    </dl>
+
+                    <div>
+                        <div class="faint" style="font-size:.76rem; margin-bottom:.5rem;">DNS</div>
+                        @if (_dnsLoading)
+                        {
+                            <span class="spinner"></span>
+                        }
+                        else if (_siteZone is null)
+                        {
+                            <div class="alert alert-info">
+                                DNS for <b>@site.PrimaryDomain</b> isn't hosted on DigitalOcean — the zone isn't in this account, so its records can't be managed here.
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="faint" style="font-size:.8rem; margin-top:0;">Zone <b>@_siteZone.Name</b> · record <span class="mono">@_siteSub</span></p>
+                            @if (_dnsError is not null)
+                            {
+                                <div class="alert alert-error" style="margin-bottom:.5rem;">@_dnsError</div>
+                            }
+                            @foreach (var rec in MatchingRecords)
+                            {
+                                <div class="spread res-row">
+                                    <span class="mono" style="font-size:.8rem;"><span class="tag">@rec.Type</span> @rec.Data</span>
+                                    <button class="btn btn-ghost btn-sm" @onclick="() => DeleteDnsRecordAsync(rec)" disabled="@_dnsBusy">✕</button>
+                                </div>
+                            }
+                            @if (MatchingRecords.Count == 0)
+                            {
+                                <p class="faint" style="font-size:.8rem;">Nothing points <span class="mono">@SiteFqdn</span> here yet.</p>
+                            }
+                            @if (_droplet?.PublicIpv4 is { Length: > 0 } ip)
+                            {
+                                <button class="btn btn-primary btn-sm" style="margin-top:.5rem;" @onclick="PointAtDropletAsync" disabled="@_dnsBusy">
+                                    @if (_dnsBusy) { <span class="spinner"></span> }
+                                    Point @SiteFqdn at this droplet (@ip)
+                                </button>
+                            }
+                        }
+                    </div>
+
+                    <div>
+                        <div class="faint" style="font-size:.76rem; margin-bottom:.5rem;">HTTPS</div>
+                        @if (site.Ssl)
+                        {
+                            <p class="faint" style="font-size:.8rem; margin-top:0;">HTTPS is enabled@(site.SslExpiresAt is { } e ? $", valid until {e:yyyy-MM-dd}" : "").</p>
+                        }
+                        <div class="row" style="flex-wrap:wrap;">
+                            <input class="input mono" style="max-width:220px;" placeholder="you@@email.com" @bind="_httpsEmail" />
+                            <button class="btn btn-sm" @onclick="() => EnableHttpsAsync(site.PrimaryDomain)" disabled="@(_httpsBusy || string.IsNullOrWhiteSpace(_httpsEmail))">
+                                @if (_httpsBusy) { <span class="spinner"></span> }
+                                @(site.Ssl ? "Renew certificate" : "Enable HTTPS")
+                            </button>
+                        </div>
+                        <p class="hint">Needs the domain's DNS pointed at this droplet and port 80 reachable. Uses certbot + Let's Encrypt.</p>
+                        @if (_httpsResult is not null)
+                        {
+                            <pre class="logview" style="height:160px; flex:none; margin-top:.5rem;">@_httpsResult.Output</pre>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (_addSite)
+{
+    <div class="modal-backdrop" @onclick="() => _addSite = false">
+        <div class="modal card" @onclick:stopPropagation="true" style="width:min(520px,94vw);">
+            <h3>Add a website</h3>
+            <p class="faint" style="margin-top:0;">Creates an nginx site and reloads it. Point the domain's DNS at this droplet@(_droplet?.PublicIpv4 is { Length: > 0 } pip ? $" ({pip})" : ""), then enable HTTPS from the site.</p>
+            @if (_addSiteError is not null) { <div class="alert alert-error" style="margin-bottom:.75rem;">@_addSiteError</div> }
+            <div class="form-field">
+                <label>Domain</label>
+                <input class="input mono" @bind="_newSite.Domain" placeholder="app.example.com" />
+            </div>
+            <div class="form-field">
+                <label>Extra domains <span class="faint">(optional)</span></label>
+                <input class="input mono" @bind="_newSite.Aliases" placeholder="www.example.com" />
+            </div>
+            <div class="form-field">
+                <label>Type</label>
+                <div class="segmented">
+                    <button type="button" class="@(_newSite.Mode == "proxy" ? "active" : "")" @onclick='() => _newSite.Mode = "proxy"'>Reverse proxy</button>
+                    <button type="button" class="@(_newSite.Mode == "static" ? "active" : "")" @onclick='() => _newSite.Mode = "static"'>Static files</button>
+                </div>
+            </div>
+            @if (_newSite.Mode == "proxy")
+            {
+                <div class="form-field">
+                    <label>App port on this server</label>
+                    <input class="input mono" type="number" @bind="_newSite.UpstreamPort" placeholder="5000" />
+                    <span class="hint">nginx proxies to http://127.0.0.1:&lt;port&gt;.</span>
+                </div>
+            }
+            else
+            {
+                <div class="form-field">
+                    <label>Document root</label>
+                    <input class="input mono" @bind="_newSite.Root" placeholder="/var/www/example" />
+                </div>
+            }
+            <div class="modal-actions">
+                <button class="btn btn-ghost" @onclick="() => _addSite = false" disabled="@_addSiteBusy">Cancel</button>
+                <button class="btn btn-primary" @onclick="CreateSiteAsync" disabled="@(_addSiteBusy || string.IsNullOrWhiteSpace(_newSite.Domain))">
+                    @if (_addSiteBusy) { <span class="spinner"></span> }
+                    Create site
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<ConfirmDialog Visible="_confirmDropDb is not null" Danger="true" Busy="_dbBusy"
+               Title="Drop database?"
+               Message="@($"Database “{_confirmDropDb}” and all its data will be permanently deleted.")"
+               ConfirmText="Drop database" OnConfirm="DropDbAsync" OnCancel="() => _confirmDropDb = null" />
+
+<ConfirmDialog Visible="_confirmDropUser is not null" Danger="true" Busy="_dbBusy"
+               Title="Drop user?"
+               Message="@($"Database user “{_confirmDropUser}” will be removed. Apps using it will lose access.")"
+               ConfirmText="Drop user" OnConfirm="DropDbUserAsync" OnCancel="() => _confirmDropUser = null" />
+
+<ConfirmDialog Visible="_confirmResize" Danger="false" Busy="_planBusy"
+               Title="Resize droplet?"
+               Message="@($"“{_droplet?.Name}” will be resized to {_resizeSize}{(_resizeDisk ? " and its disk permanently grown" : "")}. It stays off until you power it back on.")"
+               ConfirmText="Resize" OnConfirm="DoResizeAsync" OnCancel="() => _confirmResize = false" />
+
+<ConfirmDialog Visible="_confirmRebuild" Danger="true" Busy="_planBusy"
+               Title="Rebuild droplet?"
+               Message="@($"This ERASES everything on “{_droplet?.Name}” and reinstalls it. This cannot be undone — make sure you have a snapshot if you need the data.")"
+               ConfirmText="Erase & rebuild" OnConfirm="DoRebuildAsync" OnCancel="() => _confirmRebuild = false" />
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private static readonly string[] Tabs = ["Overview", "Websites", "Firewall", "Database", "Services", "Logs", "Terminal"];
+
+    private DropletDto? _droplet;
+    private bool _loading = true;
+    private bool _sshConfigured;
+    private string _tab = "Overview";
+    private string? _opError;
+
+    private bool _busy;
+
+    private readonly List<ServiceUnitDto> _services = [];
+    private bool _servicesLoading;
+    private string _serviceFilter = "";
+    private string _serviceScope = "app"; // "app" | "all"
+    private ServiceUnitDto? _selectedService;
+    private bool _servicePanelOpen;
+    private string? _serviceLog;
+    private bool _serviceLogLoading;
+
+    private readonly List<SiteDto> _sites = [];
+    private bool _sitesLoading;
+    private SiteDto? _selectedSite;
+    private bool _sitePanelOpen;
+    private List<DomainDto>? _doDomains;
+    private DomainDto? _siteZone;
+    private string _siteSub = "";
+    private readonly List<DnsRecordDto> _siteRecords = [];
+    private bool _dnsLoading;
+    private bool _dnsBusy;
+    private string? _dnsError;
+
+    private bool _addSite;
+    private readonly CreateSiteRequest _newSite = new() { Mode = "proxy" };
+    private bool _addSiteBusy;
+    private string? _addSiteError;
+    private CommandResultDto? _actionResult;
+
+    private string _httpsEmail = "";
+    private bool _httpsBusy;
+    private CommandResultDto? _httpsResult;
+
+    private FirewallStatusDto? _firewall;
+    private bool _fwLoading;
+    private bool _fwBusy;
+    private string? _fwError;
+    private readonly AddFirewallRuleRequest _newRule = new();
+
+    private List<SizeDto>? _sizes;
+    private List<ImageDto>? _images;
+    private string _resizeSize = "";
+    private bool _resizeDisk;
+    private string _rebuildImage = "";
+    private bool _planBusy;
+    private string? _planError;
+    private string? _planMessage;
+    private bool _confirmResize;
+    private bool _confirmRebuild;
+
+    private IReadOnlyList<SizeDto> AvailableSizes => _sizes?
+        .Where(s => s.Available && s.Slug != _droplet?.SizeSlug && (_droplet is null || s.Regions.Contains(_droplet.RegionSlug)))
+        .OrderBy(s => s.PriceMonthly)
+        .ToList() ?? [];
+
+    private DbServerDto? _db;
+    private bool _dbLoading;
+    private bool _dbBusy;
+    private string? _dbError;
+    private string _newDbName = "";
+    private string _newUserName = "";
+    private string? _newUserPassword;
+    private string? _confirmDropDb;
+    private string? _confirmDropUser;
+
+    private string _logSource = "nginx-error";
+    private string _logUnit = "";
+    private int _logLines = 200;
+    private string? _log;
+    private bool _logLoading;
+
+    private List<ServiceUnitDto> FilteredServices
+    {
+        get
+        {
+            IEnumerable<ServiceUnitDto> scoped = _serviceScope == "app" ? _services.Where(s => s.App) : _services;
+            if (!string.IsNullOrWhiteSpace(_serviceFilter))
+                scoped = scoped.Where(s => s.Unit.Contains(_serviceFilter, StringComparison.OrdinalIgnoreCase)
+                                           || s.Description.Contains(_serviceFilter, StringComparison.OrdinalIgnoreCase));
+            return scoped.ToList();
+        }
+    }
+
+    private static bool RequiresSsh(string tab) => tab is "Websites" or "Firewall" or "Database" or "Services" or "Logs" or "Terminal";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _droplet = await Api.GetDropletAsync(Id);
+            var ssh = await Api.GetSshStatusAsync();
+            _sshConfigured = ssh.Configured;
+        }
+        catch (Exception ex) { _opError = ex.Message; }
+        finally { _loading = false; }
+
+        _ = LoadCatalogAsync();
+    }
+
+    private async Task LoadCatalogAsync()
+    {
+        try
+        {
+            var sizes = await Api.GetSizesAsync();
+            var images = await Api.GetImagesAsync();
+            _sizes = sizes.ToList();
+            _images = images.ToList();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* resize/rebuild options just won't show */ }
+    }
+
+    private async Task DoResizeAsync()
+    {
+        _planBusy = true; _planError = null; _planMessage = null;
+        try
+        {
+            await Api.ResizeAsync(Id, _resizeSize, _resizeDisk);
+            _confirmResize = false;
+            _planMessage = $"Resize to {_resizeSize} queued. This can take a few minutes; power the droplet back on when it's done.";
+            _resizeSize = "";
+            _droplet = await Api.GetDropletAsync(Id);
+        }
+        catch (Exception ex) { _confirmResize = false; _planError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _planBusy = false; }
+    }
+
+    private async Task DoRebuildAsync()
+    {
+        _planBusy = true; _planError = null; _planMessage = null;
+        try
+        {
+            await Api.RebuildAsync(Id, _rebuildImage);
+            _confirmRebuild = false;
+            _planMessage = "Rebuild queued. The droplet is being reinstalled — this can take a few minutes.";
+            _rebuildImage = "";
+            _droplet = await Api.GetDropletAsync(Id);
+        }
+        catch (Exception ex) { _confirmRebuild = false; _planError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _planBusy = false; }
+    }
+
+    private async Task SetTab(string tab)
+    {
+        _tab = tab;
+        _opError = null;
+        if (!_sshConfigured) return;
+        if (tab == "Services" && _services.Count == 0) await LoadServicesAsync();
+        if (tab == "Websites" && _sites.Count == 0) await LoadSitesAsync();
+        if (tab == "Firewall" && _firewall is null) await LoadFirewallAsync();
+        if (tab == "Database" && _db is null) await LoadDbAsync();
+    }
+
+    private async Task LoadServicesAsync()
+    {
+        _servicesLoading = true;
+        _opError = null;
+        StateHasChanged();
+        try
+        {
+            var services = await Api.GetServicesAsync(Id);
+            _services.Clear();
+            _services.AddRange(services);
+        }
+        catch (Exception ex) { _opError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _servicesLoading = false; }
+    }
+
+    private async Task ServiceActionAsync(string unit, string action)
+    {
+        _busy = true;
+        _opError = null;
+        try
+        {
+            var result = await Api.ServiceActionAsync(Id, unit, action);
+            if (!result.Ok && !string.IsNullOrWhiteSpace(result.Error)) _opError = result.Error;
+            await LoadServicesAsync();
+            if (_selectedService is not null)
+                _selectedService = _services.FirstOrDefault(x => x.Unit == _selectedService.Unit) ?? _selectedService;
+            if (_servicePanelOpen && _selectedService is not null)
+                await LoadServiceLogAsync(_selectedService.Unit);
+        }
+        catch (Exception ex) { _opError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task OpenService(ServiceUnitDto service)
+    {
+        _selectedService = service;
+        _servicePanelOpen = true;
+        _serviceLog = null;
+        _opError = null;
+        await LoadServiceLogAsync(service.Unit);
+    }
+
+    private async Task LoadServiceLogAsync(string unit)
+    {
+        _serviceLogLoading = true;
+        StateHasChanged();
+        try
+        {
+            var result = await Api.GetLogAsync(Id, "journal", unit, 100);
+            _serviceLog = result.Content;
+        }
+        catch (Exception ex) { _serviceLog = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _serviceLogLoading = false; }
+    }
+
+    private async Task LoadLogAsync()
+    {
+        _logLoading = true;
+        _opError = null;
+        try
+        {
+            var result = await Api.GetLogAsync(Id, _logSource, _logSource == "journal" ? _logUnit : null, _logLines);
+            _log = result.Content;
+        }
+        catch (Exception ex) { _opError = ex is OrbitApiException ? ex.Message : ex.Message; _log = ""; }
+        finally { _logLoading = false; }
+    }
+
+    private static string StateClass(ServiceUnitDto s) => s.IsRunning ? "health-healthy" : s.IsFailed ? "health-critical" : "health-unknown";
+    private static string StateDot(ServiceUnitDto s) => s.IsRunning ? "bg-healthy" : s.IsFailed ? "bg-critical" : "bg-unknown";
+
+    // ---- Websites ----
+
+    private string SiteFqdn => _siteZone is null ? "" : (_siteSub == "@" ? _siteZone.Name : $"{_siteSub}.{_siteZone.Name}");
+
+    private List<DnsRecordDto> MatchingRecords => _siteRecords
+        .Where(r => r.Type is "A" or "AAAA" or "CNAME")
+        .Where(r => r.Name.Equals(_siteSub, StringComparison.OrdinalIgnoreCase)
+                    || (_siteSub == "@" && (r.Name == "@" || r.Name.Equals(_siteZone?.Name, StringComparison.OrdinalIgnoreCase))))
+        .ToList();
+
+    private async Task LoadSitesAsync()
+    {
+        _sitesLoading = true;
+        _opError = null;
+        StateHasChanged();
+        try
+        {
+            var sites = await Api.GetSitesAsync(Id);
+            _sites.Clear();
+            _sites.AddRange(sites);
+        }
+        catch (Exception ex) { _opError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _sitesLoading = false; }
+    }
+
+    private async Task OpenSite(SiteDto site)
+    {
+        _selectedSite = site;
+        _sitePanelOpen = true;
+        _dnsError = null;
+        await ResolveDnsAsync(site);
+    }
+
+    private async Task ResolveDnsAsync(SiteDto site)
+    {
+        _dnsLoading = true;
+        _siteZone = null;
+        _siteSub = "";
+        _siteRecords.Clear();
+        StateHasChanged();
+        try
+        {
+            _doDomains ??= (await Api.GetDomainsAsync()).ToList();
+            var primary = site.PrimaryDomain.ToLowerInvariant();
+            _siteZone = _doDomains
+                .Where(d => primary == d.Name.ToLowerInvariant() || primary.EndsWith("." + d.Name.ToLowerInvariant(), StringComparison.Ordinal))
+                .OrderByDescending(d => d.Name.Length)
+                .FirstOrDefault();
+
+            if (_siteZone is not null)
+            {
+                var zone = _siteZone.Name.ToLowerInvariant();
+                _siteSub = primary == zone ? "@" : primary[..(primary.Length - zone.Length - 1)];
+                _siteRecords.AddRange(await Api.GetRecordsAsync(_siteZone.Name));
+            }
+        }
+        catch (Exception ex) { _dnsError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dnsLoading = false; }
+    }
+
+    private async Task ReloadDnsAsync()
+    {
+        if (_siteZone is null) return;
+        _siteRecords.Clear();
+        _siteRecords.AddRange(await Api.GetRecordsAsync(_siteZone.Name));
+    }
+
+    private async Task PointAtDropletAsync()
+    {
+        if (_siteZone is null || _droplet?.PublicIpv4 is not { Length: > 0 } ip) return;
+        _dnsBusy = true;
+        _dnsError = null;
+        try
+        {
+            var existing = _siteRecords.FirstOrDefault(r => r.Type == "A" && r.Name.Equals(_siteSub, StringComparison.OrdinalIgnoreCase));
+            var req = new DnsRecordRequest { Type = "A", Name = _siteSub, Data = ip, Ttl = 3600 };
+            if (existing is not null) await Api.UpdateRecordAsync(_siteZone.Name, existing.Id, req);
+            else await Api.CreateRecordAsync(_siteZone.Name, req);
+            await ReloadDnsAsync();
+        }
+        catch (Exception ex) { _dnsError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dnsBusy = false; }
+    }
+
+    private async Task DeleteDnsRecordAsync(DnsRecordDto rec)
+    {
+        if (_siteZone is null) return;
+        _dnsBusy = true;
+        _dnsError = null;
+        try
+        {
+            await Api.DeleteRecordAsync(_siteZone.Name, rec.Id);
+            await ReloadDnsAsync();
+        }
+        catch (Exception ex) { _dnsError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dnsBusy = false; }
+    }
+
+    private async Task CreateSiteAsync()
+    {
+        _addSiteBusy = true;
+        _addSiteError = null;
+        try
+        {
+            var result = await Api.CreateSiteAsync(Id, _newSite);
+            if (result.Ok)
+            {
+                _actionResult = result;
+                _addSite = false;
+                _newSite.Domain = "";
+                _newSite.Aliases = null;
+                _newSite.UpstreamPort = null;
+                _newSite.Root = null;
+                await LoadSitesAsync();
+            }
+            else
+            {
+                _addSiteError = result.Output;
+            }
+        }
+        catch (Exception ex) { _addSiteError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _addSiteBusy = false; }
+    }
+
+    private async Task ReloadNginxAsync()
+    {
+        _actionResult = null;
+        try { _actionResult = await Api.ReloadNginxAsync(Id); }
+        catch (Exception ex) { _opError = ex is OrbitApiException ? ex.Message : ex.Message; }
+    }
+
+    private async Task EnableHttpsAsync(string domain)
+    {
+        _httpsBusy = true;
+        _httpsResult = null;
+        try
+        {
+            _httpsResult = await Api.EnableHttpsAsync(Id, domain, _httpsEmail.Trim());
+            if (_httpsResult.Ok)
+            {
+                await LoadSitesAsync();
+                if (_selectedSite is not null)
+                    _selectedSite = _sites.FirstOrDefault(s => s.PrimaryDomain == _selectedSite.PrimaryDomain) ?? _selectedSite;
+            }
+        }
+        catch (Exception ex) { _httpsResult = new CommandResultDto { ExitStatus = 1, Output = ex is OrbitApiException ? ex.Message : ex.Message }; }
+        finally { _httpsBusy = false; }
+    }
+
+    private async Task LoadFirewallAsync()
+    {
+        _fwLoading = true;
+        _fwError = null;
+        StateHasChanged();
+        try { _firewall = await Api.GetFirewallAsync(Id); }
+        catch (Exception ex) { _fwError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _fwLoading = false; }
+    }
+
+    private async Task ToggleFirewallAsync(bool enabled)
+    {
+        _fwBusy = true;
+        _fwError = null;
+        try
+        {
+            var r = await Api.ToggleFirewallAsync(Id, enabled);
+            if (!r.Ok && !string.IsNullOrWhiteSpace(r.Output)) _fwError = r.Output;
+            await LoadFirewallAsync();
+        }
+        catch (Exception ex) { _fwError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _fwBusy = false; }
+    }
+
+    private async Task AddFirewallRuleAsync()
+    {
+        _fwBusy = true;
+        _fwError = null;
+        try
+        {
+            var r = await Api.AddFirewallRuleAsync(Id, _newRule);
+            if (!r.Ok && !string.IsNullOrWhiteSpace(r.Output)) _fwError = r.Output;
+            _newRule.Port = "";
+            await LoadFirewallAsync();
+        }
+        catch (Exception ex) { _fwError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _fwBusy = false; }
+    }
+
+    private async Task DeleteFirewallRuleAsync(int number)
+    {
+        _fwBusy = true;
+        _fwError = null;
+        try
+        {
+            await Api.DeleteFirewallRuleAsync(Id, number);
+            await LoadFirewallAsync();
+        }
+        catch (Exception ex) { _fwError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _fwBusy = false; }
+    }
+
+    // ---- Database ----
+
+    private static readonly string[] SystemDbUsers = ["root", "postgres", "debian-sys-maint", "mysql.sys", "mysql.session", "mysql.infoschema", "mariadb.sys"];
+    private static bool IsSystemDbUser(string u) => SystemDbUsers.Contains(u, StringComparer.OrdinalIgnoreCase) || u.StartsWith("mysql.", StringComparison.OrdinalIgnoreCase);
+
+    private async Task LoadDbAsync()
+    {
+        _dbLoading = true;
+        _dbError = null;
+        StateHasChanged();
+        try { _db = await Api.GetDbServerAsync(Id); }
+        catch (Exception ex) { _dbError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dbLoading = false; }
+    }
+
+    private async Task CreateDbAsync()
+    {
+        _dbBusy = true; _dbError = null; _newUserPassword = null;
+        try
+        {
+            var r = await Api.CreateServerDatabaseAsync(Id, _newDbName.Trim());
+            if (!r.Ok && !string.IsNullOrWhiteSpace(r.Output)) _dbError = r.Output;
+            _newDbName = "";
+            await LoadDbAsync();
+        }
+        catch (Exception ex) { _dbError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dbBusy = false; }
+    }
+
+    private async Task DropDbAsync()
+    {
+        if (_confirmDropDb is null) return;
+        _dbBusy = true; _dbError = null;
+        try
+        {
+            await Api.DropServerDatabaseAsync(Id, _confirmDropDb);
+            _confirmDropDb = null;
+            await LoadDbAsync();
+        }
+        catch (Exception ex) { _dbError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dbBusy = false; }
+    }
+
+    private async Task CreateDbUserAsync()
+    {
+        _dbBusy = true; _dbError = null; _newUserPassword = null;
+        try
+        {
+            var user = await Api.CreateServerDbUserAsync(Id, _newUserName.Trim());
+            _newUserPassword = user.Password;
+            _newUserName = "";
+            await LoadDbAsync();
+        }
+        catch (Exception ex) { _dbError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dbBusy = false; }
+    }
+
+    private async Task DropDbUserAsync()
+    {
+        if (_confirmDropUser is null) return;
+        _dbBusy = true; _dbError = null;
+        try
+        {
+            await Api.DropServerDbUserAsync(Id, _confirmDropUser);
+            _confirmDropUser = null;
+            await LoadDbAsync();
+        }
+        catch (Exception ex) { _dbError = ex is OrbitApiException ? ex.Message : ex.Message; }
+        finally { _dbBusy = false; }
+    }
+
+    private static string SslClass(SiteDto s) => s.SslDaysLeft switch { null => "health-healthy", <= 0 => "health-critical", <= 14 => "health-warning", _ => "health-healthy" };
+    private static string SslDot(SiteDto s) => s.SslDaysLeft switch { null => "bg-healthy", <= 0 => "bg-critical", <= 14 => "bg-warning", _ => "bg-healthy" };
+    private static string SslLabel(SiteDto s) => s.SslDaysLeft switch { null => "SSL", <= 0 => "expired", { } d => $"SSL · {d}d" };
+}

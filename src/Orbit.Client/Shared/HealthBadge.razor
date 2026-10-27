@@ -1,0 +1,36 @@
+<span class="health-badge @CssClass">
+    <span class="dot @DotClass"></span>
+    @if (ShowLabel)
+    {
+        @Label
+    }
+</span>
+
+@code {
+    [Parameter] public DropletHealth Health { get; set; }
+    [Parameter] public bool ShowLabel { get; set; } = true;
+
+    private string CssClass => Health switch
+    {
+        DropletHealth.Healthy => "health-healthy",
+        DropletHealth.Warning => "health-warning",
+        DropletHealth.Critical => "health-critical",
+        _ => "health-unknown",
+    };
+
+    private string DotClass => Health switch
+    {
+        DropletHealth.Healthy => "bg-healthy",
+        DropletHealth.Warning => "bg-warning",
+        DropletHealth.Critical => "bg-critical",
+        _ => "bg-unknown",
+    };
+
+    private string Label => Health switch
+    {
+        DropletHealth.Healthy => "Healthy",
+        DropletHealth.Warning => "Warning",
+        DropletHealth.Critical => "Critical",
+        _ => "No data",
+    };
+}

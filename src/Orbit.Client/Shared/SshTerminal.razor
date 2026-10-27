@@ -1,0 +1,76 @@
+@implements IAsyncDisposable
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+@using Microsoft.AspNetCore.SignalR.Client
+
+<div class="term-wrap">
+    <div class="term-host" @ref="_host"></div>
+    @if (_status is not null)
+    {
+        <div class="term-status">@_status</div>
+    }
+</div>
+
+@code {
+    [Parameter] public long DropletId { get; set; }
+
+    private static readonly string CacheBust = Guid.NewGuid().ToString("N")[..8];
+
+    private ElementReference _host;
+    private IJSObjectReference? _module;
+    private HubConnection? _conn;
+    private DotNetObjectReference<SshTerminal>? _self;
+    private string? _status = "Connecting…";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            _self = DotNetObjectReference.Create(this);
+            _module = await Js.InvokeAsync<IJSObjectReference>("import", $"./js/orbit-terminal.js?v={CacheBust}");
+            var dims = await _module.InvokeAsync<Dims>("init", _host, _self);
+
+            _conn = new HubConnectionBuilder()
+                .WithUrl(Nav.ToAbsoluteUri(ApiRoutes.Hubs.Terminal))
+                .WithAutomaticReconnect()
+                .Build();
+
+            _conn.On<string>("Output", text => _ = _module.InvokeVoidAsync("write", text));
+            _conn.On("Ready", () => { _status = null; _ = InvokeAsync(StateHasChanged); _ = _module!.InvokeVoidAsync("focus"); });
+            _conn.On<string>("Error", msg =>
+            {
+                _ = _module!.InvokeVoidAsync("write", $"\r\n\u001b[31m{msg}\u001b[0m\r\n");
+                _status = null;
+                _ = InvokeAsync(StateHasChanged);
+            });
+
+            await _conn.StartAsync();
+            await _conn.InvokeAsync("Start", DropletId, dims.Cols, dims.Rows);
+        }
+        catch (Exception ex)
+        {
+            _status = $"Terminal error: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public Task OnInput(string data)
+        => _conn is { State: HubConnectionState.Connected } ? _conn.SendAsync("Send", data) : Task.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_conn is not null) { try { await _conn.DisposeAsync(); } catch { /* ignore */ } }
+        if (_module is not null)
+        {
+            try { await _module.InvokeVoidAsync("dispose"); await _module.DisposeAsync(); }
+            catch (JSDisconnectedException) { /* circuit gone */ }
+            catch { /* ignore */ }
+        }
+        _self?.Dispose();
+    }
+
+    private sealed record Dims(int Cols, int Rows);
+}

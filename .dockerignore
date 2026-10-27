@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+**/appsettings.Development.json

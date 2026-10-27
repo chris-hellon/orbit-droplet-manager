@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <UserSecretsId>orbit-droplet-manager</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Orbit.Client\Orbit.Client.csproj" />
+    <ProjectReference Include="..\Orbit.Core\Orbit.Core.csproj" />
+    <ProjectReference Include="..\Orbit.Shared\Orbit.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

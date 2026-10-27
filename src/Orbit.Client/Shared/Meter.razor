@@ -1,0 +1,26 @@
+<div class="meter">
+    <div class="meter-head">
+        <span>@Label</span>
+        <b>@Display</b>
+    </div>
+    <div class="meter-track">
+        <div class="meter-fill @FillClass" style="width:@(Percent.ToString("0"))%"></div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public double? Value { get; set; }
+
+    private double Percent => Math.Clamp(Value ?? 0, 0, 100);
+
+    private string Display => Value is null ? "—" : $"{Value.Value:0}%";
+
+    private string FillClass => Value switch
+    {
+        null => "bg-unknown",
+        >= 90 => "bg-critical",
+        >= 75 => "bg-warning",
+        _ => "bg-healthy",
+    };
+}
